@@ -741,7 +741,7 @@ export default function Interview() {
               voice.endInterview()
               if (sid) {
                 apiService.endInterview(sid).catch(() => {}).finally(() => {
-                  setTimeout(() => nav(`/report/${sid}`), 800)
+                  setTimeout(() => nav(`/report/${sid}?scenario=${scenario}`), 800)
                 })
               }
             }}>结束训练</Button>

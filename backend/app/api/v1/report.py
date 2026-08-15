@@ -1,4 +1,4 @@
-"""面试报告路由。"""
+"""训练报告路由（三场景通用：面试/汇报/演讲）。"""
 
 from __future__ import annotations
 
@@ -10,9 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
 from app.modules.report import generate_report
+from app.modules.scenarios import get_pack
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _scenario_labels(report: dict) -> tuple[str, str]:
+    """（场景名，AI 角色名）：报告标题与对话角色按场景取。"""
+    pack = get_pack(report.get("scenario", "interview"))
+    return pack.name, pack.role_name
 
 
 @router.post("/{sid}")
@@ -58,7 +65,8 @@ async def export_pdf(
         body = ParagraphStyle("body", parent=styles["BodyText"], fontName=font_name, fontSize=11, leading=18)
 
         story = []
-        story.append(Paragraph(f"面试训练报告 - {report['position']} ({report['level']})", h1))
+        sc_name, ai_role = _scenario_labels(report)
+        story.append(Paragraph(f"{sc_name}报告 - {report['position']} ({report['level']})", h1))
         story.append(Spacer(1, 12))
         story.append(Paragraph(f"<b>综合评分：</b>{report['overall_score']} / 100", body))
         story.append(Paragraph(f"<b>总评：</b>{report.get('summary', '')}", body))
@@ -86,8 +94,9 @@ async def export_pdf(
         story.append(PageBreak())
 
         story.append(Paragraph("完整对话记录", h2))
+        _, ai_role = _scenario_labels(report)
         for d in report.get("dialogues", []):
-            role = "面试官" if d["role"] == "ai" else "候选人"
+            role = ai_role if d["role"] == "ai" else "我"
             story.append(Paragraph(f"<b>{role}：</b>{d['text']}", body))
 
         doc.build(story)
@@ -114,11 +123,12 @@ def _render_html(report: dict) -> str:
     emo = report.get("emotion_metrics", {})
     sug = report.get("suggestions", {})
     dialogues = report.get("dialogues", [])
+    sc_name, ai_role = _scenario_labels(report)
 
     def _list(items): return "".join(f"<li>{i}</li>" for i in items)
 
     return f"""<!doctype html>
-<html><head><meta charset="utf-8"><title>面试报告</title>
+<html><head><meta charset="utf-8"><title>{sc_name}报告</title>
 <style>
 body {{ font-family: -apple-system, "PingFang SC", sans-serif; max-width: 720px; margin: 40px auto; color: #222; line-height: 1.6; }}
 h1 {{ color: #534ab7; }}
@@ -130,7 +140,7 @@ h2 {{ border-bottom: 2px solid #534ab7; padding-bottom: 6px; margin-top: 32px; }
 .dialogue.user {{ color: #1d9e75; }}
 </style></head>
 <body>
-<h1>面试训练报告</h1>
+<h1>{sc_name}报告</h1>
 <p>{report.get('position', '')} · {report.get('level', '')}</p>
 <div class="score">{report.get('overall_score', '-')}</div>
 <p>{report.get('summary', '')}</p>
@@ -156,6 +166,6 @@ h2 {{ border-bottom: 2px solid #534ab7; padding-bottom: 6px; margin-top: 32px; }
 <ul>{_list(sug.get('mid_term', []))}</ul>
 
 <h2>完整对话记录</h2>
-{''.join(f'<div class="dialogue {d["role"]}"><span class="role">{"面试官" if d["role"]=="ai" else "候选人"}：</span>{d["text"]}</div>' for d in dialogues)}
+{''.join(f'<div class="dialogue {d["role"]}"><span class="role">{ai_role if d["role"]=="ai" else "我"}：</span>{d["text"]}</div>' for d in dialogues)}
 
 </body></html>"""

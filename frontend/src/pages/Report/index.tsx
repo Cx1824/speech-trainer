@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, Typography, Button, Space, Spin, message, Tag, Progress } from 'antd'
 import { DownloadOutlined, ReloadOutlined } from '@ant-design/icons'
 import { apiService } from '@/services/api'
+import { SCENARIOS } from '@/types/interview'
 
 const { Title, Paragraph } = Typography
 
 interface ReportData {
   session_id: string
+  scenario: string
+  scenario_name: string
   position: string
   level: string
   overall_score: number
@@ -37,6 +40,10 @@ interface ReportData {
 export default function Report() {
   const { id } = useParams()
   const nav = useNavigate()
+  const [searchParams] = useSearchParams()
+  // 加载态时报告未返回，场景从 URL query 兜底（跳转方携带）
+  const scenarioQuery = searchParams.get('scenario')
+  const scenarioNameLoading = SCENARIOS[scenarioQuery || 'interview']?.name ?? '训练'
   const [report, setReport] = useState<ReportData | null>(null)
   const [loading, setLoading] = useState(true)
   const [progress, setProgress] = useState(10)
@@ -61,7 +68,7 @@ export default function Report() {
     return (
       <div style={{ textAlign: 'center', padding: 80, maxWidth: 480, margin: '0 auto' }}>
         <Spin size="large" />
-        <div style={{ fontSize: 16, marginTop: 24, marginBottom: 16 }}>AI 正在分析你的面试表现…</div>
+        <div style={{ fontSize: 16, marginTop: 24, marginBottom: 16 }}>AI 正在分析你的{scenarioNameLoading}表现…</div>
         <Progress percent={Math.round(progress)} status="active" strokeColor="#534ab7" />
         <div style={{ color: '#888', fontSize: 13, marginTop: 12 }}>
           正在调用 LLM 进行内容评分与建议生成，通常需要 10~30 秒，请勿关闭页面
@@ -86,11 +93,17 @@ export default function Report() {
   const emo = report.emotion_metrics || {}
   const cm = report.content_metrics || {}
   const sug = report.suggestions || {}
+  // 场景化文案：报告标题/角色名按 scenario 取（面试/汇报/演讲）
+  const scenarioMeta = SCENARIOS[report.scenario] ?? SCENARIOS.interview
+  const aiRoleName = report.scenario_name && !SCENARIOS[report.scenario]
+    ? `${report.scenario_name}主持`  // 未知场景兜底
+    : scenarioMeta.role
+  const reportTitle = `${scenarioMeta.name}报告`
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={2}>面试训练报告</Title>
+        <Title level={2}>{reportTitle}</Title>
         <Space>
           <Button
             icon={<DownloadOutlined />}
@@ -176,7 +189,7 @@ export default function Report() {
         {report.dialogues?.map((d, i) => (
           <div key={i} style={{ marginBottom: 12, padding: 8, background: d.role === 'ai' ? '#f5f5f5' : '#f0f7ff', borderRadius: 4 }}>
             <div style={{ fontWeight: 500, marginBottom: 4 }}>
-              {d.role === 'ai' ? '面试官' : '候选人'}
+              {d.role === 'ai' ? aiRoleName : '我'}
               <span style={{ color: '#888', fontWeight: 400, marginLeft: 8, fontSize: 12 }}>
                 · {d.stage}
               </span>
