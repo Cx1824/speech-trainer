@@ -29,6 +29,27 @@ async def list_styles() -> dict:
     return {"styles": all_styles()}
 
 
+@router.get("/scenarios")
+async def list_scenarios() -> dict:
+    """列出所有训练场景（前端首页卡片用）。"""
+    from app.modules.scenarios import list_packs
+
+    return {
+        "scenarios": [
+            {
+                "key": p.key,
+                "name": p.name,
+                "role_name": p.role_name,
+                "description": p.description,
+                "needs_resume": p.needs_resume,
+                "needs_material": p.needs_material,
+                "timed": p.timed,
+            }
+            for p in list_packs()
+        ]
+    }
+
+
 @router.post("/jd/fetch", response_model=schemas.FetchJDOut)
 async def fetch_jd_route(payload: schemas.FetchJDIn) -> schemas.FetchJDOut:
     """抓取 JD 链接内容。"""
@@ -111,6 +132,30 @@ async def upload_resume(
     file_path.write_bytes(content)
 
     return await interview.save_resume(db, sid, str(file_path), parsed)
+
+
+@router.post("/{sid}/material", response_model=schemas.InterviewSessionOut)
+async def upload_material(
+    sid: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_session),
+) -> schemas.InterviewSessionOut:
+    """上传汇报/演讲材料并提取文本（复用简历解析的文本抽取链路）。"""
+    settings = get_settings()
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in SUPPORTED_EXT:
+        raise ResumeParseError(f"不支持的格式：{ext}，仅支持 {', '.join(SUPPORTED_EXT)}")
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise ResumeParseError(f"文件过大：{len(content)} > {MAX_FILE_SIZE}")
+
+    text = extract_text(content, file.filename or "material")
+
+    file_path = Path(settings.upload_dir) / f"{sid}_material{ext}"
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_bytes(content)
+
+    return await interview.save_material(db, sid, str(file_path), text)
 
 
 @router.post("/{sid}/start", response_model=schemas.InterviewSessionOut)

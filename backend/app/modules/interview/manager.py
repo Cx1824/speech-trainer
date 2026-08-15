@@ -87,6 +87,20 @@ async def save_resume(
     return _to_out(row)
 
 
+async def save_material(
+    db: AsyncSession,
+    sid: str,
+    material_file: str,
+    material_text: str,
+) -> InterviewSessionOut:
+    """保存汇报/演讲材料。"""
+    row = await _load_row(db, sid)
+    row.material_file = material_file
+    row.material_text = material_text
+    await db.commit()
+    return _to_out(row)
+
+
 async def update_session(
     db: AsyncSession,
     sid: str,
