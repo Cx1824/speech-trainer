@@ -42,6 +42,7 @@ class ClientMsgType(str, Enum):
     FINISH_STAGE = "finish_stage"
     END_INTERVIEW = "end_interview"
     REQUEST_TTS = "request_tts"
+    BEGIN_TIMER = "begin_timer"          # 前端开场白播完，从此刻起计时（限时场景）
 
 
 class ServerMsgType(str, Enum):
@@ -53,8 +54,9 @@ class ServerMsgType(str, Enum):
     ANALYSIS_UPDATE = "analysis_update"       # 实时分析推送（口癖/重复/情绪）
     EMOTION_UPDATE = "emotion_update"
     TIME_UP = "time_up"                       # 限时场景到点（汇报/演讲）
+    TIMER_STARTED = "timer_started"           # 计时已启动（开场白播完才计时的回执）
     LIVE_METRICS = "live_metrics"             # 实时指标（语速/紧张度，说话中滚动刷新）
-    LIVE_FEEDBACK = "live_feedback"           # 即时反馈（词级/节奏，不等句子定稿）
+    LIVE_FEEDBACK = "live_feedback"           # 即时反馈（词级/节奏，不定稿就推）
     ERROR = "error"
 
 

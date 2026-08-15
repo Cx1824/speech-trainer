@@ -378,22 +378,39 @@ async def voice_ws(websocket: WebSocket, sid: str):
             await websocket.close()
             return
 
-        # 限时场景：到点自动结束（推送 time_up，并推进阶段）
+        # 限时场景：到点自动结束。
+        # 计时零点=开场白播完（前端发 begin_timer），而非连接时刻——
+        # 避免 LLM 生成 + TTS 播报的十几秒被计入限时，用户还没开口倒计时已跑掉。
+        # finish_stage / commit_answer 会兜底补启动（开场白没播就跳阶段的极端情况）。
         timer_task: asyncio.Task | None = None
+        timer_started = False
+        timer_limit_min = 0
+
+        def _start_timer() -> bool:
+            """惰性启动倒计时 task（幂等：已启动则跳过）。返回是否为限时场景。"""
+            nonlocal timer_task, timer_started
+            if timer_limit_min <= 0:
+                return False
+            if timer_started:
+                return True
+            timer_started = True
+
+            async def _on_time_up() -> None:
+                await asyncio.sleep(timer_limit_min * 60)
+                _safe_send(websocket, envelope(ServerMsgType.TIME_UP,
+                                               limit_minutes=timer_limit_min))
+
+            timer_task = asyncio.create_task(_on_time_up())
+            return True
+
         try:
             from sqlalchemy import select as _select
             _res = await db.execute(_select(InterviewSessionRow).where(InterviewSessionRow.id == sid))
             _row = _res.scalar_one_or_none()
             if _row and _row.duration_limit and _row.duration_limit > 0 and get_pack(_row.scenario).timed:
-
-                async def _on_time_up() -> None:
-                    await asyncio.sleep(_row.duration_limit * 60)
-                    _safe_send(websocket, envelope(ServerMsgType.TIME_UP,
-                                                   limit_minutes=_row.duration_limit))
-
-                timer_task = asyncio.create_task(_on_time_up())
+                timer_limit_min = _row.duration_limit
         except Exception:
-            logger.exception("启动计时器失败（不影响会话）")
+            logger.exception("读取限时配置失败（不影响会话）")
 
         try:
             while True:
@@ -419,7 +436,11 @@ async def voice_ws(websocket: WebSocket, sid: str):
                             ):
                                 _safe_send(websocket, envelope(ServerMsgType.LIVE_FEEDBACK, **fb))
                     elif "text" in msg and msg["text"]:
-                        await _handle_json(websocket, db, sid, msg["text"], turn_sentences, pcm_buffer, baseline=baseline, smoother=emotion_smoother)
+                        await _handle_json(
+                            websocket, db, sid, msg["text"], turn_sentences, pcm_buffer,
+                            baseline=baseline, smoother=emotion_smoother,
+                            start_timer=_start_timer,
+                        )
                 elif msg.get("type") == "websocket.disconnect":
                     break
         except WebSocketDisconnect:
@@ -441,7 +462,7 @@ def _safe_send(websocket: WebSocket, text: str) -> None:
         pass
 
 
-async def _handle_json(websocket: WebSocket, db, sid: str, raw: str, turn_sentences: list[str], pcm_buffer=None, baseline=None, smoother=None) -> None:
+async def _handle_json(websocket: WebSocket, db, sid: str, raw: str, turn_sentences: list[str], pcm_buffer=None, baseline=None, smoother=None, start_timer=None) -> None:
     try:
         msg = json.loads(raw)
     except json.JSONDecodeError:
@@ -450,12 +471,21 @@ async def _handle_json(websocket: WebSocket, db, sid: str, raw: str, turn_senten
 
     if mtype == "commit_answer":
         text = msg.get("payload", {}).get("text", "")
+        # 兜底：限时场景用户先开口（开场白还在播/没播完就跳阶段），从此刻起计时
+        if start_timer:
+            start_timer()
         await _commit_answer(websocket, db, sid, text, pcm_buffer=pcm_buffer, baseline=baseline, smoother=smoother)
         turn_sentences.clear()
     elif mtype == "start_stage":
         await _auto_next_question(websocket, db, sid)
+    elif mtype == "begin_timer":
+        # 前端开场白播完：计时零点确认，从此刻起倒计时（非限时场景不回执）
+        if start_timer and start_timer():
+            await websocket.send_text(envelope(ServerMsgType.TIMER_STARTED))
     elif mtype == "finish_stage":
         # 限时场景：用户讲完本阶段（或计时器到点）→ 推进到下一阶段
+        if start_timer:
+            start_timer()  # 兜底：开场白没播完就点了「讲完了」
         await _finish_stage(websocket, db, sid, turn_sentences, pcm_buffer, baseline=baseline, smoother=smoother)
     elif mtype == "end_interview":
         from sqlalchemy import select
@@ -569,7 +599,11 @@ async def _auto_next_question(websocket: WebSocket, db, sid: str) -> None:
 
 
 async def _stream_tts(websocket: WebSocket, db, text: str) -> None:
-    """分句流式合成：每合成一句就推一句，前端逐句接续播放。"""
+    """分句合成推送：首句先行播放，其余并发合成、按原句顺序发送。
+
+    串行合成时句间有"合成等待"空隙（AI 发言听起来一顿一顿）；
+    并发起跑 + 按序发送让音频帧几乎无缝接续，总耗时≈首句合成时间。
+    """
     try:
         cfg = await load_provider_config(db, "tts")
         provider = get_tts(cfg)
@@ -577,13 +611,30 @@ async def _stream_tts(websocket: WebSocket, db, text: str) -> None:
         sentences = _split_sentences(text)
         if not sentences:
             return
-        for i, sent in enumerate(sentences):
-            audio = await provider.synthesize(sent)
-            await websocket.send_text(envelope(
-                ServerMsgType.TTS_AUDIO,
-                audio=encode_audio(audio), format=fmt,
-                seq=i, total=len(sentences), text=sent,
-            ))
+        # 首句：立即合成立即发（最低首响延迟）
+        first_audio = await provider.synthesize(sentences[0])
+        await websocket.send_text(envelope(
+            ServerMsgType.TTS_AUDIO,
+            audio=encode_audio(first_audio), format=fmt,
+            seq=0, total=len(sentences), text=sentences[0],
+        ))
+        if len(sentences) == 1:
+            return
+        # 其余句：并发合成（任务同时起跑），按原句顺序发送
+        rest_tasks = [
+            asyncio.create_task(provider.synthesize(s))
+            for s in sentences[1:]
+        ]
+        for i, task in enumerate(rest_tasks, start=1):
+            try:
+                audio = await task
+                await websocket.send_text(envelope(
+                    ServerMsgType.TTS_AUDIO,
+                    audio=encode_audio(audio), format=fmt,
+                    seq=i, total=len(sentences), text=sentences[i],
+                ))
+            except Exception:
+                logger.warning("TTS 第 %d 句合成失败（跳过该句）", i, exc_info=True)
     except Exception as e:
         logger.warning("流式 TTS 失败（不影响文字流程）：%s", e)
 

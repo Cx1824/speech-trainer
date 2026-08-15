@@ -54,7 +54,7 @@ const RMS_SILENCE_THRESHOLD = 0.006
 export function useVoiceSession(
   sid: string | null,
   onAnalysis?: (payload: Record<string, unknown>) => void,
-  opts?: { manual?: boolean; autoResume?: boolean },  // manual=true：不自动提交；autoResume=true：manual 模式下 TTS 播完自动恢复采集（限时场景）
+  opts?: { manual?: boolean; autoResume?: boolean; onTimerStarted?: () => void },  // manual=true：不自动提交；autoResume=true：manual 模式下 TTS 播完自动恢复采集（限时场景）
 ) {
   const [state, setState] = useState<VoiceSessionState>({
     status: 'idle',
@@ -94,6 +94,8 @@ export function useVoiceSession(
   const manualPausedRef = useRef(false) // 手动模式：采集挂起（未点"开始回答"）
   const onAnalysisRef = useRef(onAnalysis)
   onAnalysisRef.current = onAnalysis
+  const onTimerStartedRef = useRef(opts?.onTimerStarted)
+  onTimerStartedRef.current = opts?.onTimerStarted
   const manualRef = useRef(Boolean(opts?.manual))
   manualRef.current = Boolean(opts?.manual)
   const autoResumeRef = useRef(Boolean(opts?.autoResume))
@@ -260,6 +262,9 @@ export function useVoiceSession(
     } else if (type === 'interview_completed') {
       forceEndedRef.current = true
       setStatus({ status: 'ended' })
+    } else if (type === 'timer_started') {
+      // 计时零点确认：开场白播完，从此刻起计时（页面据此设 startedAt）
+      onTimerStartedRef.current?.()
     } else if (type === 'time_up') {
       // 限时场景到点：提示用户（由页面决定是否 finishStage）
       setStatus({ timeUp: true })
@@ -371,12 +376,13 @@ export function useVoiceSession(
   const playNextTTS = useCallback(() => {
     const item = ttsQueueRef.current.shift()
     if (!item) {
-      // 队列播完：恢复监听
+      // 队列播完：恢复监听；限时场景通知后端计时零点（幂等，仅首次生效）
       ttsPlayingRef.current = false
       aiSpeakingRef.current = false
       hasSpeechRef.current = false
       finalTextRef.current = ''
       partialTextRef.current = ''
+      wsRef.current?.send(JSON.stringify({ type: 'begin_timer' }))
       if (manualRef.current) {
         // 手动模式：挂起采集，等用户点"开始回答"（限时场景 autoResume 除外）
         if (autoResumeRef.current) {
@@ -400,8 +406,9 @@ export function useVoiceSession(
     el.play().catch(() => playNextTTS())
   }, [])
 
-  /** 主动请求第一题 */
+  /** 主动请求第一题：先置 thinking（AI 准备中），收到 ai_question + TTS 播报 */
   const requestFirstQuestion = useCallback(() => {
+    setStatus({ status: 'thinking' })
     wsRef.current?.send(JSON.stringify({ type: 'start_stage' }))
   }, [])
 

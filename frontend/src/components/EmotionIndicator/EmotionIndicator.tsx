@@ -87,6 +87,8 @@ export interface TimerData {
   timeOver: boolean
   nearEnd: boolean
   fmt: (s: number) => string
+  /** false=开场白未播完，计时还没开始 */
+  running?: boolean
 }
 
 /** 底部状态条：⚡实时大数字 + 计时 + 紧张/自信双指标 + 单行明细 */
@@ -151,8 +153,15 @@ export default function EmotionIndicator({
         ) : (
           <span className="eb-badge eb-badge-dim">我的状态</span>
         )}
-        {/* 限时计时（驾驶舱）：正常蓝 / 剩1分钟橙 / 到点红 */}
-        {timer && (
+        {/* 限时计时（驾驶舱）：等待开场灰 / 正常蓝 / 剩1分钟橙 / 到点红 */}
+        {timer && (timer.running === false ? (
+          <span className="eb-item">
+            <span className="eb-big" style={{ color: '#bfbfbf', fontVariantNumeric: 'tabular-nums' }}>
+              {timer.remainSec !== null ? timer.fmt(timer.remainSec) : '--:--'}
+            </span>
+            <span className="eb-unit">剩余<br /><span style={{ color: '#d9d9d9' }}>等开场结束</span></span>
+          </span>
+        ) : (
           <span className="eb-item" style={{ marginLeft: hasLive ? undefined : 0 }}>
             <span
               className="eb-big"
@@ -174,7 +183,7 @@ export default function EmotionIndicator({
               )}
             </span>
           </span>
-        )}
+        ))}
         <span className="eb-tags">
           {data?.voiceSignal && <span className="eb-tag eb-tag-green">声学信号</span>}
           {data?.calibrated && <span className="eb-tag eb-tag-blue">个人基线</span>}

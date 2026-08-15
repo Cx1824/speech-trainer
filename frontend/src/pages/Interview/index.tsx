@@ -60,7 +60,8 @@ export default function Interview() {
   const [savingProfile, setSavingProfile] = useState(false)
 
   const [emotion, setEmotion] = useState<EmotionData | null>(null)
-  // 限时计时器
+  // 限时计时器：零点=开场白播完（timer_started 回执），非点「开始」时刻——
+  // LLM 生成开场白 + TTS 播报的时长不应吃掉用户表达的限时
   const [startedAt, setStartedAt] = useState<Date | null>(null)
   const [durationLimit, setDurationLimit] = useState(0)
   const [, setTick] = useState(0)  // 秒级刷新计时器显示
@@ -87,7 +88,12 @@ export default function Interview() {
       factors: p.factors as Record<string, number> | undefined,
       calibrated: Boolean(p.calibrated),
     })
-  }, { manual: !voiceMode || isTimed, autoResume: isTimed })  // 限时：持续采集+按钮推进；手动面试：挂起+按钮恢复
+  }, {
+    manual: !voiceMode || isTimed,
+    autoResume: isTimed,
+    // 开场白播完的后端回执：此刻才是计时零点
+    onTimerStarted: () => setStartedAt(new Date()),
+  })  // 限时：持续采集+按钮推进；手动面试：挂起+按钮恢复
 
   // 加载风格列表 + 档案列表（仅面试场景加载档案）
   useEffect(() => {
@@ -362,9 +368,8 @@ export default function Interview() {
     if (phase !== 'running' || !sid || voiceStartRef.current) return
     voiceStartRef.current = true
     endedHandledRef.current = false
-    // 计时基准：会话 started_at（后端 start 时写入），本地时钟偏差可接受
+    // 只读时长上限；计时零点由 timer_started 回执设置（开场白播完才开始）
     apiService.getInterview(sid).then((s) => {
-      if (s.started_at) setStartedAt(new Date(s.started_at))
       if (s.duration_limit) setDurationLimit(s.duration_limit)
     }).catch(() => {})
     ;(async () => {
@@ -963,8 +968,8 @@ export default function Interview() {
             data={emotion}
             live={vs.liveMetrics}
             timer={
-              isTimed && startedAt
-                ? { elapsedSec, remainSec, timeOver, nearEnd, fmt: fmtTime }
+              isTimed && durationLimit > 0
+                ? { elapsedSec, remainSec, timeOver, nearEnd, fmt: fmtTime, running: !!startedAt }
                 : undefined
             }
           />
