@@ -371,6 +371,7 @@ async def _stream_tts(websocket: WebSocket, db, text: str) -> None:
     try:
         cfg = await load_provider_config(db, "tts")
         provider = get_tts(cfg)
+        fmt = "mp3" if getattr(provider, "name", "") == "edge" else "wav"
         sentences = _split_sentences(text)
         if not sentences:
             return
@@ -378,7 +379,7 @@ async def _stream_tts(websocket: WebSocket, db, text: str) -> None:
             audio = await provider.synthesize(sent)
             await websocket.send_text(envelope(
                 ServerMsgType.TTS_AUDIO,
-                audio=encode_audio(audio), format="wav",
+                audio=encode_audio(audio), format=fmt,
                 seq=i, total=len(sentences), text=sent,
             ))
     except Exception as e:

@@ -21,7 +21,8 @@ const ASR_PROVIDERS = [
 ]
 
 const TTS_PROVIDERS = [
-  { value: 'cosyvoice', label: '阿里云 CosyVoice（推荐，专业合成音色）' },
+  { value: 'edge', label: 'Edge TTS（免费，无需 API Key）' },
+  { value: 'cosyvoice', label: '阿里云 CosyVoice（专业合成音色）' },
   { value: 'qwen_audio', label: '阿里云 Qwen-Audio' },
   { value: 'aliyun', label: '阿里云 TTS' },
   { value: 'custom', label: '自定义（OpenAI 兼容）' },
@@ -99,6 +100,19 @@ function ProviderForm({ kind, status, providers, modelLabel, onSave, saving }: P
         </Form.Item>
       )}
       <Form.Item label={modelLabel} name="model">
+        {kind === 'tts' && status.provider === 'edge' ? (
+          <Select
+            placeholder="选择音色"
+            allowClear
+            options={[
+              { value: 'zh-CN-YunjianNeural', label: '云健（浑厚男声·面试官感）' },
+              { value: 'zh-CN-YunxiNeural', label: '云希（年轻男声·沉稳）' },
+              { value: 'zh-CN-YunyangNeural', label: '云扬（新闻男声·正式）' },
+              { value: 'zh-CN-XiaoxiaoNeural', label: '晓晓（女声·亲切）' },
+              { value: 'zh-CN-XiaoyiNeural', label: '晓伊（女声·温柔）' },
+            ]}
+          />
+        ) : (
         <Input
           placeholder={
             kind === 'llm' ? 'deepseek-chat'
@@ -108,6 +122,7 @@ function ProviderForm({ kind, status, providers, modelLabel, onSave, saving }: P
             : 'model_id'
           }
         />
+        )}
       </Form.Item>
       <Space>
         <Button type="primary" htmlType="submit" loading={saving}>

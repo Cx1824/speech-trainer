@@ -16,15 +16,12 @@ interface Question {
 export default function QuestionBank() {
   const [position, setPosition] = useState(POSITIONS[0])
   const [questions, setQuestions] = useState<Question[]>([])
-  const [loading, setLoading] = useState(false)
   const [form] = Form.useForm<Question>()
 
   const load = (p: string) => {
-    setLoading(true)
     fetch(`/api/v1/question_bank/${p}`)
       .then((r) => r.json())
       .then((d) => setQuestions(d.questions || []))
-      .finally(() => setLoading(false))
   }
 
   useEffect(() => { load(position) }, [position])
@@ -46,7 +43,7 @@ export default function QuestionBank() {
     }
   }
 
-  const remove = async (id?: string, idx: number = 0) => {
+  const remove = async (idx: number = 0) => {
     const next = questions.filter((_, i) => i !== idx)
     await fetch(`/api/v1/question_bank/${position}`, {
       method: 'PUT',
@@ -90,7 +87,7 @@ export default function QuestionBank() {
                 <span>{q.content}</span>
               </Space>
             } extra={
-              <Popconfirm title="确认删除？" onConfirm={() => remove(q.id, i)}>
+              <Popconfirm title="确认删除？" onConfirm={() => remove(i)}>
                 <Button danger size="small" icon={<DeleteOutlined />} />
               </Popconfirm>
             }>

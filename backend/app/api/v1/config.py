@@ -38,9 +38,9 @@ async def test_provider(
 
     # 前置检查：关键字段是否配置
     missing = []
-    if not cfg.api_key:
+    if cfg.provider != "edge" and not cfg.api_key:
         missing.append("API Key")
-    if kind in ("llm", "tts") and cfg.provider not in ("qwen_audio", "cosyvoice", "aliyun_tts") and not cfg.base_url:
+    if kind in ("llm", "tts") and cfg.provider not in ("qwen_audio", "cosyvoice", "aliyun_tts", "edge") and not cfg.base_url:
         missing.append("Base URL")
     if missing:
         return {"ok": False, "message": f"未配置：{', '.join(missing)}"}
