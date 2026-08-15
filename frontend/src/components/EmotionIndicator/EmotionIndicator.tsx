@@ -5,6 +5,10 @@ export interface EmotionData {
   tensionLevel: string
   confidenceScore: number
   confidenceLevel: string
+  /** 声学信号（真实声音特征；false=仅文本用词推断） */
+  voiceSignal?: boolean
+  pitchJitter?: number   // 基频抖动（越大声音越"发抖"）
+  pauseCount?: number    // 停顿次数（本句）
 }
 
 /** 通俗解读 + 行动建议 */
@@ -47,7 +51,14 @@ export default function EmotionIndicator({ data }: { data: EmotionData | null })
 
   return (
     <div className="emotion-panel">
-      <h4>我的状态 <span style={{ fontSize: 12, fontWeight: 400, color: '#999' }}>（根据你的用词与表达实时判断）</span></h4>
+      <h4>
+        我的状态{' '}
+        <span style={{ fontSize: 12, fontWeight: 400, color: '#999' }}>
+          （用词 + 声音实时判断
+          {data?.voiceSignal && <span style={{ color: '#52c41a' }}> · 已接入声学信号</span>}
+          ）
+        </span>
+      </h4>
 
       <div className="metric">
         <div className="metric-label">
@@ -59,6 +70,13 @@ export default function EmotionIndicator({ data }: { data: EmotionData | null })
         </div>
         <div className="metric-value">{tension.toFixed(0)}%</div>
         <div className="metric-tip">💡 {tensionTip} — {tensionAdvice}</div>
+        {data?.voiceSignal && (
+          <div className="metric-tip" style={{ color: '#888' }}>
+            声学依据：基频抖动 {(data.pitchJitter ?? 0).toFixed(3)}
+            {tension >= 55 && (data.pitchJitter ?? 0) > 0.05 ? '（声音发抖）' : '（平稳）'}
+            {data.pauseCount ? ` · 本句停顿 ${data.pauseCount} 次` : ''}
+          </div>
+        )}
       </div>
 
       <div className="metric">
@@ -75,8 +93,8 @@ export default function EmotionIndicator({ data }: { data: EmotionData | null })
 
       {!data && (
         <div style={{ fontSize: 12, color: '#aaa', marginTop: 8 }}>
-          开始回答后，这里会根据你的用词（模糊词、口头禅数量）实时评估状态。
-          紧张度高 = 用词犹豫闪烁；自信度低 = 表达不够果断。
+          开始回答后，这里会结合你的用词（模糊词、口头禅）与声音特征（音调抖动、停顿节奏）实时评估状态。
+          紧张度高 = 声音发抖或用词犹豫；自信度低 = 表达不够果断。
         </div>
       )}
     </div>

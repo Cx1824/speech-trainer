@@ -80,6 +80,9 @@ export default function Interview() {
       tensionLevel: p.tension_level as string,
       confidenceScore: p.confidence_score as number,
       confidenceLevel: p.confidence_level as string,
+      voiceSignal: Boolean(p.voice_signal),
+      pitchJitter: p.pitch_jitter as number | undefined,
+      pauseCount: p.pause_count as number | undefined,
     })
   }, { manual: !voiceMode || isTimed, autoResume: isTimed })  // 限时：持续采集+按钮推进；手动面试：挂起+按钮恢复
 

@@ -93,6 +93,9 @@ async def voice_ws(websocket: WebSocket, sid: str):
         turn_sentences: list[str] = []
         # partial 阶段已提示过的词（ASR partial 是句内累积文本，防止同一词反复推送）
         partial_notified: set[str] = set()
+        # 声学特征旁路缓冲：与 ASR 同一份 PCM，句子定稿时算真实紧张度
+        from app.modules.analysis.pcm_features import PcmFeatureBuffer
+        pcm_buffer = PcmFeatureBuffer()
 
         def _on_asr_partial(t: str) -> None:
             """增量字幕：立即推送；首次出现的口癖词即时提示一次（不累计计数）。"""
@@ -123,14 +126,19 @@ async def voice_ws(websocket: WebSocket, sid: str):
                 pass
 
         def _on_asr_final(t: str) -> None:
-            """句子定稿：①推送字幕 ②完整多维分析（口癖/模糊/不自信/重复/长句/情绪）。"""
+            """句子定稿：①推送字幕 ②完整多维分析（口癖/模糊/不自信/重复/长句/情绪）。
+
+            情绪融合真实声学信号：旁路 PCM 缓冲计算基频抖动/能量起伏/停顿 → 紧张度。
+            """
             turn_sentences.append(t)
             partial_notified.clear()
             _safe_send(websocket, envelope(
                 ServerMsgType.SPEECH_RECOGNIZED, text=t, is_final=True))
             try:
                 text_res = analyze_text(t)
-                emotion = analyze_emotion(text_res, None)
+                # 声学特征（音频不足 0.5s 时 feats=None，回落纯文本判定）
+                _, voice_feats = pcm_buffer.tension()
+                emotion = analyze_emotion(text_res, voice_feats)
                 _safe_send(websocket, envelope(ServerMsgType.ANALYSIS_UPDATE, **{
                     "sentence": t,
                     "warning_level": text_res.warning_level,
@@ -144,6 +152,15 @@ async def voice_ws(websocket: WebSocket, sid: str):
                     "tension_level": emotion.tension_level,
                     "confidence_score": emotion.confidence_score,
                     "confidence_level": emotion.confidence_level,
+                    # 声学明细（前端可展示"为什么紧张"）
+                    **({
+                        "voice_signal": True,
+                        "pitch_jitter": round(voice_feats.pitch_jitter, 4),
+                        "pause_count": voice_feats.pause_count,
+                        "speech_rate_estimate": round(
+                            len(t) / voice_feats.duration_sec * 60, 1
+                        ) if voice_feats.duration_sec > 0 else 0,
+                    } if voice_feats else {"voice_signal": False}),
                 }))
             except Exception:
                 logger.exception("句子级分析失败")
@@ -207,8 +224,9 @@ async def voice_ws(websocket: WebSocket, sid: str):
                 if msg.get("type") == "websocket.receive":
                     if "bytes" in msg and msg["bytes"]:
                         await asr.push_audio(msg["bytes"])
+                        pcm_buffer.push(msg["bytes"])  # 旁路：声学紧张度用
                     elif "text" in msg and msg["text"]:
-                        await _handle_json(websocket, db, sid, msg["text"], turn_sentences)
+                        await _handle_json(websocket, db, sid, msg["text"], turn_sentences, pcm_buffer)
                 elif msg.get("type") == "websocket.disconnect":
                     break
         except WebSocketDisconnect:
@@ -230,7 +248,7 @@ def _safe_send(websocket: WebSocket, text: str) -> None:
         pass
 
 
-async def _handle_json(websocket: WebSocket, db, sid: str, raw: str, turn_sentences: list[str]) -> None:
+async def _handle_json(websocket: WebSocket, db, sid: str, raw: str, turn_sentences: list[str], pcm_buffer=None) -> None:
     try:
         msg = json.loads(raw)
     except json.JSONDecodeError:
@@ -239,13 +257,13 @@ async def _handle_json(websocket: WebSocket, db, sid: str, raw: str, turn_senten
 
     if mtype == "commit_answer":
         text = msg.get("payload", {}).get("text", "")
-        await _commit_answer(websocket, db, sid, text)
+        await _commit_answer(websocket, db, sid, text, pcm_buffer=pcm_buffer)
         turn_sentences.clear()
     elif mtype == "start_stage":
         await _auto_next_question(websocket, db, sid)
     elif mtype == "finish_stage":
         # 限时场景：用户讲完本阶段（或计时器到点）→ 推进到下一阶段
-        await _finish_stage(websocket, db, sid, turn_sentences)
+        await _finish_stage(websocket, db, sid, turn_sentences, pcm_buffer)
     elif mtype == "end_interview":
         from sqlalchemy import select
         res = await db.execute(select(InterviewSessionRow).where(InterviewSessionRow.id == sid))
@@ -258,11 +276,11 @@ async def _handle_json(websocket: WebSocket, db, sid: str, raw: str, turn_senten
     # skip_tts 等其他消息暂不处理
 
 
-async def _finish_stage(websocket: WebSocket, db, sid: str, turn_sentences: list[str]) -> None:
+async def _finish_stage(websocket: WebSocket, db, sid: str, turn_sentences: list[str], pcm_buffer=None) -> None:
     """限时场景结束当前阶段：先落库本轮已说的内容，再推进阶段。"""
     if turn_sentences:
         text = "".join(turn_sentences)
-        await _commit_answer(websocket, db, sid, text, advance=False)
+        await _commit_answer(websocket, db, sid, text, advance=False, pcm_buffer=pcm_buffer)
         turn_sentences.clear()
     session = await interview.advance_stage(db, sid)
     await websocket.send_text(envelope(ServerMsgType.STAGE_CHANGED, stage=session.current_stage))
@@ -273,14 +291,20 @@ async def _finish_stage(websocket: WebSocket, db, sid: str, turn_sentences: list
     await _auto_next_question(websocket, db, sid)
 
 
-async def _commit_answer(websocket: WebSocket, db, sid: str, text: str, advance: bool = True) -> None:
+async def _commit_answer(
+    websocket: WebSocket, db, sid: str, text: str,
+    advance: bool = True, pcm_buffer=None,
+) -> None:
     """提交回答（分析已逐句推送过）。advance=True 时自动生成下一题。"""
     if not text.strip():
         return
 
     # 整轮分析（用于落库；前端展示已由句子级推送完成）
     text_res = analyze_text(text)
-    emotion = analyze_emotion(text_res, None)
+    voice_feats = None
+    if pcm_buffer is not None:
+        _, voice_feats = pcm_buffer.tension()  # 冲掉缓冲里最后一段（<0.5s 返回 None）
+    emotion = analyze_emotion(text_res, voice_feats)
     analysis_payload = {
         "text": text,
         "warning_level": text_res.warning_level,
@@ -294,6 +318,12 @@ async def _commit_answer(websocket: WebSocket, db, sid: str, text: str, advance:
         "tension_level": emotion.tension_level,
         "confidence_score": emotion.confidence_score,
         "confidence_level": emotion.confidence_level,
+        "voice_signal": voice_feats is not None,
+        **({
+            "pitch_jitter": round(voice_feats.pitch_jitter, 4),
+            "pause_count": voice_feats.pause_count,
+            "avg_pause_duration": round(voice_feats.avg_pause_duration, 2),
+        } if voice_feats else {}),
     }
     await interview.save_user_message(db, sid, text, analysis_payload)
 
