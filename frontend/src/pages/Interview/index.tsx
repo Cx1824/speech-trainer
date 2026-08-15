@@ -324,6 +324,12 @@ export default function Interview() {
   // 面试自动启动（自动/手动模式共用 /ws/voice 链路）：等 sid 就绪 + phase=running 后拉起
   const voiceStartRef = useRef(false)
   const endedHandledRef = useRef(false)
+  // 字幕滚动区：文字增长时自动滚到底部
+  const subtitleRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = subtitleRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [voice.state.finalText, voice.state.partialText])
   useEffect(() => {
     if (phase !== 'running' || !sid || voiceStartRef.current) return
     voiceStartRef.current = true
@@ -664,10 +670,25 @@ export default function Interview() {
       return acc
     }, {})
 
+    // 运行页：固定视口三段布局——工具栏 / 主区（左字幕+右反馈，各自内部滚动）/ 底部状态条
+    // 64=antd Header，48=Content 上下 padding 24×2，8=页面与视口底部留白
+    const VIEWPORT_H = 'calc(100vh - 64px - 48px - 8px)'
+
     return (
-      <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-          <Space>
+      <div
+        style={{
+          maxWidth: 1100,
+          margin: '0 auto',
+          height: VIEWPORT_H,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+          minHeight: 0,
+        }}
+      >
+        {/* 顶部工具栏（固定高度） */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, rowGap: 4 }}>
+          <Space wrap>
             <Tag color={vs.connected ? 'green' : 'orange'}>{vs.connected ? '语音通道已连接' : '连接中'}</Tag>
             <Tag color={meta.color}>{meta.label}</Tag>
             {isTimed && startedAt && (
@@ -703,73 +724,102 @@ export default function Interview() {
         </div>
 
         {(vs.timeUp || timeOver) && isTimed && (
-          <Alert type={timeOver ? 'error' : 'warning'} showIcon style={{ marginBottom: 12 }}
+          <Alert type={timeOver ? 'error' : 'warning'} showIcon
             message="⏰ 时间到！系统将自动收尾，也可点「讲完了，下一环节」继续。" />
         )}
 
         {vs.error && (
-          <Alert type="error" showIcon style={{ marginBottom: 12 }} message={vs.error} />
+          <Alert type="error" showIcon message={vs.error} />
         )}
 
-        <Card title={`AI ${scenarioMeta.role}`} style={{ marginBottom: 12 }}>
-          <Paragraph style={{ minHeight: 48, fontSize: 16 }}>
-            {vs.aiQuestion || (isInterview ? '等待面试官提问...' : `等待AI${scenarioMeta.role}发言...`)}
-          </Paragraph>
-        </Card>
+        {/* 主区：左（AI 发言 + 实时字幕）/ 右（实时反馈），高度弹性、各自内部滚动 */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) 380px',
+            gap: 12,
+            flex: 1,
+            minHeight: 0,
+          }}
+        >
+          {/* 左列：flex 纵向，字幕区吃掉剩余高度 */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
+            <Card title={`AI ${scenarioMeta.role}`} size="small" style={{ flexShrink: 0 }}>
+              <Paragraph
+                style={{ fontSize: 15, maxHeight: 96, overflowY: 'auto', marginBottom: 0 }}
+              >
+                {vs.aiQuestion || (isInterview ? '等待面试官提问...' : `等待AI${scenarioMeta.role}发言...`)}
+              </Paragraph>
+            </Card>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 400px', gap: 12 }}>
-          <Card title="实时字幕（你正在说的话）">
-            <div style={{ minHeight: 140, fontSize: 17, lineHeight: 2 }}>
-              {vs.finalText && renderHighlighted(vs.finalText)}
-              {vs.partialText && <span style={{ color: '#999' }}>{vs.partialText}</span>}
-              {!vs.finalText && !vs.partialText && (
-                <span style={{ color: '#bbb' }}>
-                  {isInterview
-                    ? (voiceMode ? '开始说话吧，说完停顿一下，面试官会自动接话…' : '点「开始回答」后说话，说完点「完成回答」提交')
-                    : '开始你的表达吧，全程实时反馈；讲完点右上角「讲完了，下一环节」'}
-                </span>
-              )}
-            </div>
-            {voiceMode ? (
-              vs.status === 'listening' && (
-                <div style={{ fontSize: 12, color: '#888' }}>
+            <Card
+              title="实时字幕（你正在说的话）"
+              size="small"
+              style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+              styles={{ body: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' } }}
+            >
+              {/* 字幕滚动区：自动滚到底部 */}
+              <div
+                ref={subtitleRef}
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  overflowY: 'auto',
+                  fontSize: 17,
+                  lineHeight: 2,
+                  paddingRight: 4,
+                }}
+              >
+                {vs.finalText && renderHighlighted(vs.finalText)}
+                {vs.partialText && <span style={{ color: '#999' }}>{vs.partialText}</span>}
+                {!vs.finalText && !vs.partialText && (
+                  <span style={{ color: '#bbb' }}>
+                    {isInterview
+                      ? (voiceMode ? '开始说话吧，说完停顿一下，面试官会自动接话…' : '点「开始回答」后说话，说完点「完成回答」提交')
+                      : '开始你的表达吧，全程实时反馈；讲完点右上角「讲完了，下一环节」'}
+                  </span>
+                )}
+              </div>
+              {voiceMode ? (
+                <div style={{ fontSize: 12, color: '#888', marginTop: 8, flexShrink: 0 }}>
                   检测到说话后，静音 1.2 秒即视为回答完毕，自动提交。
                   <span style={{ background: '#fff1b8', padding: '0 3px' }}>黄</span>＝口头禅
                   <span style={{ background: '#ffd6d6', padding: '0 3px', marginLeft: 4 }}>红</span>＝重复
                   <span style={{ background: '#efdbff', padding: '0 3px', marginLeft: 4 }}>紫</span>＝模糊
                 </div>
-              )
-            ) : (
-              <Space style={{ marginTop: 8 }}>
-                <Button
-                  type="primary"
-                  disabled={vs.status === 'listening'}
-                  onClick={() => voice.beginAnswer()}
-                >
-                  开始回答
-                </Button>
-                <Button
-                  danger
-                  disabled={vs.status !== 'listening'}
-                  onClick={() => {
-                    if (!vs.finalText && !vs.partialText) {
-                      message.warning('还没检测到说话内容，请先回答再提交')
-                      return
-                    }
-                    voice.commitAnswer()
-                  }}
-                >
-                  完成回答
-                </Button>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  <span style={{ background: '#fff1b8', padding: '0 3px' }}>黄</span>＝口头禅
-                  <span style={{ background: '#ffd6d6', padding: '0 3px', marginLeft: 4 }}>红</span>＝重复
-                  <span style={{ background: '#efdbff', padding: '0 3px', marginLeft: 4 }}>紫</span>＝模糊
-                </Text>
-              </Space>
-            )}
-          </Card>
+              ) : (
+                <Space style={{ marginTop: 8, flexShrink: 0 }} wrap>
+                  <Button
+                    type="primary"
+                    disabled={vs.status === 'listening'}
+                    onClick={() => voice.beginAnswer()}
+                  >
+                    开始回答
+                  </Button>
+                  <Button
+                    danger
+                    disabled={vs.status !== 'listening'}
+                    onClick={() => {
+                      if (!vs.finalText && !vs.partialText) {
+                        message.warning('还没检测到说话内容，请先回答再提交')
+                        return
+                      }
+                      voice.commitAnswer()
+                    }}
+                  >
+                    完成回答
+                  </Button>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    <span style={{ background: '#fff1b8', padding: '0 3px' }}>黄</span>＝口头禅
+                    <span style={{ background: '#ffd6d6', padding: '0 3px', marginLeft: 4 }}>红</span>＝重复
+                    <span style={{ background: '#efdbff', padding: '0 3px', marginLeft: 4 }}>紫</span>＝模糊
+                  </Text>
+                </Space>
+              )}
+            </Card>
+          </div>
 
+          {/* 右列：反馈列表，内部滚动 */}
           <Card
             title={
               <span>
@@ -779,7 +829,8 @@ export default function Interview() {
               </span>
             }
             size="small"
-            bodyStyle={{ maxHeight: 480, overflowY: 'auto' }}
+            style={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}
+            styles={{ body: { flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 } }}
           >
             {/* 汇总：口头禅 Top + 分维度统计 */}
             {(topFillers.length > 0 || vs.feedbacks.length > 0) && (
@@ -845,7 +896,8 @@ export default function Interview() {
           </Card>
         </div>
 
-        <div style={{ marginTop: 12 }}>
+        {/* 底部状态条（固定高度，不随内容增长） */}
+        <div style={{ flexShrink: 0 }}>
           <EmotionIndicator data={emotion} live={vs.liveMetrics} />
         </div>
       </div>

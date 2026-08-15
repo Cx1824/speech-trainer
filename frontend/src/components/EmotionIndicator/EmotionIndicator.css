@@ -1,69 +1,162 @@
-.emotion-panel {
-  padding: 16px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-  color: #fff;
-  min-width: 200px;
+/* 底部状态条：浅色风格，与 antd 卡片统一 */
+.emotion-bar {
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: 10px;
+  color: #262626;
 }
 
-.emotion-panel h4 {
-  margin: 0 0 12px;
-  font-size: 13px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.7);
-}
-
-.metric {
-  margin-bottom: 12px;
-}
-
-.metric:last-child {
-  margin-bottom: 0;
-}
-
-.metric-label {
+/* ===== 第一行：⚡实时大数字 ===== */
+.eb-row {
   display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  margin-bottom: 4px;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
 }
 
-.metric-level {
+.eb-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #e6f4ff;
+  color: #1677ff;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.eb-badge-dim {
+  background: #f5f5f5;
+  color: #8c8c8c;
   font-weight: 500;
 }
 
-.metric-level.good { color: #1d9e75; }
-.metric-level.warn { color: #fac775; }
-.metric-level.bad { color: #e24b4a; }
-
-.bar {
-  height: 6px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
-  overflow: hidden;
-  margin-bottom: 4px;
+.eb-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
 }
 
-.bar-fill {
+.eb-big {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.eb-unit {
+  font-size: 12px;
+  color: #8c8c8c;
+  line-height: 1.3;
+}
+
+.eb-unit b {
+  font-size: 13px;
+}
+
+.eb-tags {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.eb-tag {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid;
+}
+
+.eb-tag-green { color: #389e0d; border-color: #b7eb8f; background: #f6ffed; }
+.eb-tag-blue { color: #1677ff; border-color: #91caff; background: #e6f4ff; }
+
+/* ===== 第二行：双指标 ===== */
+.eb-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.eb-metric-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.eb-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #434343;
+}
+
+.eb-level {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.eb-level.good { color: #52c41a; }
+.eb-level.warn { color: #faad14; }
+.eb-level.bad { color: #ff4d4f; }
+
+.eb-score {
+  margin-left: auto;
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.eb-score.good { color: #52c41a; }
+.eb-score.warn { color: #faad14; }
+.eb-score.bad { color: #ff4d4f; }
+
+.eb-bar {
+  height: 8px;
+  background: #f5f5f5;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.eb-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: 4px;
   transition: width 0.5s ease;
 }
 
-.bar-fill.good { background: #1d9e75; }
-.bar-fill.warn { background: #fac775; }
-.bar-fill.bad { background: #e24b4a; }
+.eb-fill.good { background: linear-gradient(90deg, #73d13d, #52c41a); }
+.eb-fill.warn { background: linear-gradient(90deg, #ffd666, #faad14); }
+.eb-fill.bad { background: linear-gradient(90deg, #ff7875, #ff4d4f); }
 
-.metric-value {
-  font-size: 11px;
-  text-align: right;
-  color: rgba(255, 255, 255, 0.6);
+.eb-sub {
+  font-size: 12px;
+  color: #8c8c8c;
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.metric-tip {
+/* ===== 第三行：单行明细 ===== */
+.eb-detail {
   font-size: 12px;
-  color: #666;
-  margin-top: 6px;
-  line-height: 1.5;
-  grid-column: 1 / -1;
+  color: #8c8c8c;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed #f0f0f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 900px) {
+  .eb-metrics {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .eb-row {
+    gap: 14px;
+  }
 }
