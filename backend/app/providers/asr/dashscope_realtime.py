@@ -101,11 +101,12 @@ class RealtimeASRSession:
         await s.close()
     """
 
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL) -> None:
+    def __init__(self, api_key: str, model: str = DEFAULT_MODEL, vocabulary_id: str = "") -> None:
         if not api_key:
             raise ProviderError("DashScope ASR 未配置 API Key")
         self.api_key = api_key
         self.model = model
+        self.vocabulary_id = vocabulary_id  # 热词表 ID（空=不启用）
         self.task_id = uuid.uuid4().hex
         self._ws: Optional[websockets.WebSocketClientProtocol] = None
         self._recv_task: Optional[asyncio.Task] = None
@@ -139,10 +140,15 @@ class RealtimeASRSession:
                 "parameters": {
                     "format": "pcm",
                     "sample_rate": SAMPLE_RATE,
-                    "language_hints": ["zh"],
+                    # 中英混合：技术词（React/OKR/DAU）不再被硬翻成中文
+                    "language_hints": ["zh", "en"],
+                    # 热词表（专有名词/技能/公司名优先匹配）
+                    **({"vocabulary_id": self.vocabulary_id} if self.vocabulary_id else {}),
                     # VAD 断句：静音 800ms 切句（贴合面试对话节奏）
                     "max_sentence_silence": 800,
                     "punctuation_prediction_enabled": True,
+                    # 注意：disfluency_removal_enabled 必须保持 False——
+                    # 口头禅检测（核心功能）依赖"嗯/啊/那个"被原样识别
                     # 心跳：持续静音时保持连接
                     "heartbeat": True,
                 },

@@ -35,6 +35,7 @@ from app.modules.scenarios import get_pack
 from app.providers import get_tts
 from app.providers.asr.dashscope_realtime import RealtimeASRSession
 from app.schemas import ProviderConfigIn
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -147,10 +148,29 @@ async def voice_ws(websocket: WebSocket, sid: str):
             except Exception:
                 logger.exception("句子级分析失败")
 
-        # 建 ASR 流式会话
+        # 建 ASR 流式会话（带会话级热词表：简历技能/材料/JD 专有名词优先匹配）
         try:
             asr_cfg = await _get_asr_config(db)
-            asr = RealtimeASRSession(asr_cfg.api_key, "paraformer-realtime-v2")
+            vocab_id = ""
+            try:
+                from app.modules.asr_hotwords import create_vocabulary, extract_hotwords
+                _srow = (await db.execute(
+                    select(InterviewSessionRow).where(InterviewSessionRow.id == sid)
+                )).scalar_one_or_none()
+                if _srow is not None:
+                    _resume = json.loads(_srow.resume_parsed_json) if _srow.resume_parsed_json else None
+                    hotwords = extract_hotwords(
+                        resume=_resume,
+                        material_text=_srow.material_text or "",
+                        jd_content=_srow.jd_content or "",
+                        position=_srow.position if _srow.position != "未指定" else "",
+                        company=_srow.company or "",
+                    )
+                    if hotwords:
+                        vocab_id = await create_vocabulary(asr_cfg.api_key, hotwords) or ""
+            except Exception:
+                logger.exception("热词准备失败（ASR 将无热词运行）")
+            asr = RealtimeASRSession(asr_cfg.api_key, "paraformer-realtime-v2", vocabulary_id=vocab_id)
             asr.on_partial = _on_asr_partial
             asr.on_final = _on_asr_final
             asr.on_error = lambda m: _safe_send(
