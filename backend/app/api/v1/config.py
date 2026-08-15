@@ -65,3 +65,28 @@ async def test_provider(
     except Exception as e:
         ok, message = False, f"测试异常：{e}"
     return {"ok": ok, "message": message}
+
+
+@router.get("/voice-calibration")
+async def get_voice_calibration(db: AsyncSession = Depends(get_session)) -> dict:
+    """获取校准文本 + 当前基线状态（前端校准卡片用）。"""
+    from app.modules.analysis import CALIBRATION_TEXT
+    from app.modules.config.store import load_voice_baseline
+
+    baseline = await load_voice_baseline(db)
+    return {
+        "text": CALIBRATION_TEXT,
+        "char_count": len(CALIBRATION_TEXT),
+        "estimated_sec": round(len(CALIBRATION_TEXT) / 4.2),  # 按常人语速估
+        "calibrated": baseline is not None,
+        "baseline": baseline,
+    }
+
+
+@router.delete("/voice-calibration")
+async def reset_voice_calibration(db: AsyncSession = Depends(get_session)) -> dict:
+    """清除基线（换人时先清再重新校准；直接重校准也会覆盖）。"""
+    from app.modules.config.store import save_voice_baseline
+
+    await save_voice_baseline(db, {})
+    return {"ok": True, "message": "已清除，请重新校准"}

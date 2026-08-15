@@ -7,8 +7,23 @@ export interface EmotionData {
   confidenceLevel: string
   /** 声学信号（真实声音特征；false=仅文本用词推断） */
   voiceSignal?: boolean
-  pitchJitter?: number   // 基频抖动（越大声音越"发抖"）
+  pitchJitter?: number   // 基频快速颤抖率（去趋势后，越大声音越"发抖"）
   pauseCount?: number    // 停顿次数（本句）
+  /** 语速（字/分钟） */
+  speechRate?: number
+  /** 各信号对紧张度的贡献明细 */
+  factors?: Record<string, number>
+  /** 是否按个人校准基线评估 */
+  calibrated?: boolean
+}
+
+/** 紧张度因子中文名 */
+const FACTOR_LABELS: Record<string, string> = {
+  jitter: '声音颤抖',
+  speech_rate: '语速偏离',
+  pause: '停顿异常',
+  energy: '能量起伏',
+  hedge: '用词犹豫',
 }
 
 /** 通俗解读 + 行动建议 */
@@ -44,6 +59,20 @@ function interpret(tension: number, confidence: number) {
   return { tensionTip, tensionAdvice, confTip, confAdvice }
 }
 
+/** 把 factors 明细转成一句人话（为什么紧张） */
+function explainFactors(factors: Record<string, number> | undefined, tension: number): string {
+  if (!factors) return ''
+  const parts: string[] = []
+  for (const [k, label] of Object.entries(FACTOR_LABELS)) {
+    const v = factors[k]
+    if (typeof v === 'number' && v >= 5) {
+      parts.push(`${label} ${Math.round(v)}`)
+    }
+  }
+  if (!parts.length) return tension >= 40 ? '各信号接近你的平时水平' : '各信号均在你的基线范围内'
+  return `主要贡献：${parts.join(' · ')}（分值越大影响越大）`
+}
+
 export default function EmotionIndicator({ data }: { data: EmotionData | null }) {
   const tension = data?.tensionScore ?? 0
   const confidence = data?.confidenceScore ?? 0
@@ -56,6 +85,7 @@ export default function EmotionIndicator({ data }: { data: EmotionData | null })
         <span style={{ fontSize: 12, fontWeight: 400, color: '#999' }}>
           （用词 + 声音实时判断
           {data?.voiceSignal && <span style={{ color: '#52c41a' }}> · 已接入声学信号</span>}
+          {data?.calibrated && <span style={{ color: '#1677ff' }}> · 按个人基线</span>}
           ）
         </span>
       </h4>
@@ -72,9 +102,20 @@ export default function EmotionIndicator({ data }: { data: EmotionData | null })
         <div className="metric-tip">💡 {tensionTip} — {tensionAdvice}</div>
         {data?.voiceSignal && (
           <div className="metric-tip" style={{ color: '#888' }}>
-            声学依据：基频抖动 {(data.pitchJitter ?? 0).toFixed(3)}
-            {tension >= 55 && (data.pitchJitter ?? 0) > 0.05 ? '（声音发抖）' : '（平稳）'}
+            声学依据：颤抖 {(data.pitchJitter ?? 0).toFixed(3)}
+            {tension >= 55 && (data.factors?.jitter ?? 0) >= 10 ? '（声音发抖）' : '（平稳）'}
+            {data.speechRate ? ` · 语速 ${Math.round(data.speechRate)} 字/分` : ''}
             {data.pauseCount ? ` · 本句停顿 ${data.pauseCount} 次` : ''}
+          </div>
+        )}
+        {data?.factors && Object.keys(data.factors).length > 0 && (
+          <div className="metric-tip" style={{ color: '#aaa', fontSize: 12 }}>
+            {explainFactors(data.factors, tension)}
+          </div>
+        )}
+        {data && !data.calibrated && data.voiceSignal && (
+          <div className="metric-tip" style={{ color: '#faad14', fontSize: 12 }}>
+            ⚠ 尚未声音校准，当前按人群默认基线评估；到「设置」做一次朗读校准会更准
           </div>
         )}
       </div>
@@ -93,8 +134,8 @@ export default function EmotionIndicator({ data }: { data: EmotionData | null })
 
       {!data && (
         <div style={{ fontSize: 12, color: '#aaa', marginTop: 8 }}>
-          开始回答后，这里会结合你的用词（模糊词、口头禅）与声音特征（音调抖动、停顿节奏）实时评估状态。
-          紧张度高 = 声音发抖或用词犹豫；自信度低 = 表达不够果断。
+          开始回答后，这里会结合你的用词（模糊词、口头禅）与声音特征（颤抖、语速、停顿节奏）实时评估状态。
+          紧张度按「偏离你平时说话习惯多少」评判（设置页可做朗读校准）。
         </div>
       )}
     </div>

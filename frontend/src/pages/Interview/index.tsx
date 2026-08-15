@@ -83,6 +83,9 @@ export default function Interview() {
       voiceSignal: Boolean(p.voice_signal),
       pitchJitter: p.pitch_jitter as number | undefined,
       pauseCount: p.pause_count as number | undefined,
+      speechRate: p.speech_rate_estimate as number | undefined,
+      factors: p.factors as Record<string, number> | undefined,
+      calibrated: Boolean(p.calibrated),
     })
   }, { manual: !voiceMode || isTimed, autoResume: isTimed })  // 限时：持续采集+按钮推进；手动面试：挂起+按钮恢复
 

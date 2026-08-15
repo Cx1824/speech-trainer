@@ -129,3 +129,129 @@ def compute_tension(feats: VoiceFeatures) -> float:
             score += 10
 
     return max(0.0, min(100.0, score))
+
+
+# ---------------------------------------------------------------------------
+# 情绪判定 2.0：个人基线 + 连续打分
+# ---------------------------------------------------------------------------
+
+# 人群默认基线（校准前的兜底；数值来自常人朗读/对话的典型范围）
+DEFAULT_BASELINE = {
+    "pitch_jitter": 0.020,      # 快速颤抖率（去趋势后），正常 0.005-0.035
+    "speech_rate": 4.2,         # 字/秒，正常 3.5-5.0
+    "pause_rate": 3.0,          # 每分钟 >0.5s 停顿次数，正常 2-6
+    "pitch_mean": 0.0,          # 个人音域中心（Hz），0=未知不参与
+}
+
+
+@dataclass
+class VoiceBaseline:
+    """个人声学基线（校准段落朗读得到）。"""
+
+    pitch_jitter: float = DEFAULT_BASELINE["pitch_jitter"]
+    speech_rate: float = DEFAULT_BASELINE["speech_rate"]
+    pause_rate: float = DEFAULT_BASELINE["pause_rate"]
+    pitch_mean: float = DEFAULT_BASELINE["pitch_mean"]
+    sample_sec: float = 0.0     # 校准音频总时长（不足 10s 不可信）
+    created_at: str = ""        # ISO 时间戳
+
+    def is_valid(self) -> bool:
+        return self.sample_sec >= 10.0
+
+    def to_dict(self) -> dict:
+        return {
+            "pitch_jitter": round(self.pitch_jitter, 5),
+            "speech_rate": round(self.speech_rate, 3),
+            "pause_rate": round(self.pause_rate, 3),
+            "pitch_mean": round(self.pitch_mean, 1),
+            "sample_sec": round(self.sample_sec, 2),
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict | None) -> "VoiceBaseline":
+        if not d:
+            return cls()
+        return cls(
+            pitch_jitter=float(d.get("pitch_jitter", DEFAULT_BASELINE["pitch_jitter"])),
+            speech_rate=float(d.get("speech_rate", DEFAULT_BASELINE["speech_rate"])),
+            pause_rate=float(d.get("pause_rate", DEFAULT_BASELINE["pause_rate"])),
+            pitch_mean=float(d.get("pitch_mean", 0.0)),
+            sample_sec=float(d.get("sample_sec", 0.0)),
+            created_at=str(d.get("created_at", "")),
+        )
+
+
+def _ramp(x: float, lo: float, hi: float) -> float:
+    """连续分段函数：x<=lo→0，x>=hi→1，中间线性过渡。替代跳档加分。"""
+    if x <= lo:
+        return 0.0
+    if x >= hi:
+        return 1.0
+    return (x - lo) / (hi - lo)
+
+
+def compute_tension_v2(
+    feats: VoiceFeatures,
+    baseline: VoiceBaseline | None = None,
+    speech_rate: float | None = None,
+) -> tuple[float, dict]:
+    """连续打分版紧张度（0-100）+ 明细。
+
+    与旧版差异：
+    - 连续 _ramp 替代跳档加分（分数有梯度）
+    - 有基线时按"偏离个人常态"打分（U 形），无基线用人群默认
+    - 语速（字/秒，ASR 定稿文字÷音频时长）作为独立信号接入
+    - 能量用变异系数（CV=std/mean），对麦克风增益天然归一化
+
+    返回 (score, detail)：detail 是各信号贡献明细，前端可展示"为什么"。
+    """
+    bl = baseline or VoiceBaseline()
+    detail: dict[str, float] = {}
+
+    # ---- ① 快速颤抖（pitch jitter，去趋势后）----
+    # 偏离基线 1.5 倍开始升分，3 倍封顶
+    j_ratio = feats.pitch_jitter / max(bl.pitch_jitter, 1e-4)
+    j_score = 35.0 * _ramp(j_ratio, 1.5, 3.0)
+    detail["jitter"] = round(j_score, 1)
+
+    # ---- ② 语速偏离（字/秒，U 形：过快过慢都紧张）----
+    # 基线 ±20% 舒适区；过快侧 1.6 倍基线封顶（语速飙升=强紧张信号）
+    s_score = 0.0
+    if speech_rate and speech_rate > 0:
+        s_ratio = speech_rate / max(bl.speech_rate, 0.5)
+        lo, hi = 0.8, 1.2
+        if s_ratio > hi:
+            s_score = 25.0 * _ramp(s_ratio, hi, 1.6)
+        elif s_ratio < lo:
+            s_score = 18.0 * _ramp(lo - s_ratio, 0.0, 0.45)
+        detail["speech_rate"] = round(s_score, 1)
+        detail["speech_rate_ratio"] = round(s_ratio, 2)
+
+    # ---- ③ 停顿密度偏离（每分钟停顿数，U 形）----
+    # 基线 ±50% 舒适（停顿本身个体差异大）；短句天然停顿少，需要最小区间保护
+    p_score = 0.0
+    if feats.duration_sec >= 3.0:  # <3s 的短句不评停顿（样本不足必误判）
+        prate = feats.pause_count / feats.duration_sec * 60
+        p_ratio = prate / max(bl.pause_rate, 0.5)
+        if p_ratio > 1.5:
+            p_score = 18.0 * _ramp(p_ratio, 1.5, 4.0)
+        elif p_ratio < 1 / 1.5:
+            # 停顿过少（语流过密不换气）——轻微信号
+            p_score = 8.0 * _ramp(1 / 1.5 - p_ratio, 0.0, 0.6)
+        detail["pause"] = round(p_score, 1)
+        detail["pause_ratio"] = round(p_ratio, 2)
+
+    # ---- ④ 能量起伏（CV，增益归一化）----
+    # 正常说话 CV（每帧能量）约 0.5-1.0；>1.6 显著起伏
+    if feats.energy_mean > 0:
+        cv = feats.energy_std / (feats.energy_mean + 1e-9)
+        e_score = 12.0 * _ramp(cv, 1.2, 2.2)
+        detail["energy"] = round(e_score, 1)
+        detail["energy_cv"] = round(cv, 2)
+    else:
+        e_score = 0.0
+
+    # 基线 25：即使所有信号都平稳也给一个非零底（真实人不可能 0 紧张）
+    score = 25.0 + j_score + s_score + p_score + e_score
+    return max(0.0, min(100.0, score)), detail

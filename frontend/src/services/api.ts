@@ -34,6 +34,16 @@ export const apiService = {
     request<ApiConfigOut>('/config', { method: 'PUT', body: JSON.stringify(data) }),
   testProvider: (kind: 'llm' | 'asr' | 'tts') =>
     request<{ ok: boolean; message: string }>(`/config/test/${kind}`, { method: 'POST' }),
+  getVoiceCalibration: () =>
+    request<{
+      text: string
+      char_count: number
+      estimated_sec: number
+      calibrated: boolean
+      baseline: Record<string, number | string> | null
+    }>('/config/voice-calibration'),
+  resetVoiceCalibration: () =>
+    request<{ ok: boolean; message: string }>('/config/voice-calibration', { method: 'DELETE' }),
 
   createInterview: (data: {
     scenario?: string

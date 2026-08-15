@@ -88,15 +88,15 @@ class PcmFeatureBuffer:
 
         # ---- 基频（自相关法，逐帧，对浊音帧估计）----
         try:
-            f0s = _estimate_f0_per_frame(frames, sr)
+            f0s, times = _estimate_f0_per_frame(frames, sr)
             if len(f0s) > 0:
-                import numpy as np2
-                arr = np2.array(f0s)
-                feats.pitch_mean = float(np2.mean(arr))
-                feats.pitch_std = float(np2.std(arr))
+                arr = np.array(f0s)
+                feats.pitch_mean = float(np.mean(arr))
+                feats.pitch_std = float(np.std(arr))
                 if len(arr) > 1:
-                    diffs = np2.abs(np2.diff(arr))
-                    feats.pitch_jitter = float(np2.mean(diffs) / (feats.pitch_mean + 1e-6))
+                    # 情绪 2.0：先去趋势（滤掉慢速语调起伏），只留快速颤动算 jitter。
+                    # 直接 diff 会把抑扬顿挫（正常重音/语调）误判为紧张。
+                    feats.pitch_jitter = _detrended_jitter(arr, times)
         except Exception as e:
             logger.debug("基频估计失败：%s", e)
 
@@ -110,12 +110,97 @@ class PcmFeatureBuffer:
         return compute_tension(feats), feats
 
 
-def _estimate_f0_per_frame(frames, sr: int) -> list[float]:
+# ---------------------------------------------------------------------------
+# 校准：朗读基准段落 → 个人基线
+# ---------------------------------------------------------------------------
+
+# 校准提示语：给使用者一段平和的朗读材料（数字/专名混合，长短句交错，
+# 覆盖正常语速下的自然停顿与语调）
+CALIBRATION_TEXT = (
+    "大家好，我是一名热爱表达的普通人。今天天气不错，微风轻拂，阳光洒在窗台上。"
+    "我平时喜欢读书、跑步，也喜欢和朋友聊天。有人说，说话是一件简单的事，"
+    "但我相信，把话说得清楚、说得从容，需要长期的练习。现在是我做声音校准的时间，"
+    "我会用最自然、最放松的状态读完这一段话。数字方面，从 1 数到 10，"
+    "一二三四五六七八九十。好，读完了，谢谢大家。"
+)
+
+
+def build_baseline(
+    feats_list: list[VoiceFeatures],
+    char_count: int,
+    created_at: str = "",
+) -> VoiceBaseline:
+    """从校准音频的多个句子特征聚合出个人基线。
+
+    feats_list：校准朗读按句切分的特征列表（PcmFeatureBuffer.flush 的输出）
+    char_count：ASR 识别的总字数（算语速用）
+    """
+    from datetime import datetime, timezone
+
+    from app.modules.analysis.voice_features import DEFAULT_BASELINE, VoiceBaseline
+
+    if created_at:
+        ts = created_at
+    else:
+        ts = datetime.now(timezone.utc).isoformat()
+
+    bl = VoiceBaseline(created_at=ts)
+    total_sec = sum(f.duration_sec for f in feats_list)
+    if total_sec < 10.0 or not feats_list:
+        # 样本不足：保持默认基线但记录时长（前端提示"再读一次"）
+        bl.sample_sec = total_sec
+        return bl
+
+    jitters = [f.pitch_jitter for f in feats_list if f.pitch_jitter > 0]
+    pitches = [f.pitch_mean for f in feats_list if f.pitch_mean > 0]
+    pauses = sum(f.pause_count for f in feats_list)
+
+    if jitters:
+        bl.pitch_jitter = float(sum(jitters) / len(jitters))
+    if pitches:
+        bl.pitch_mean = float(sum(pitches) / len(pitches))
+    if char_count > 0:
+        bl.speech_rate = char_count / total_sec
+    bl.pause_rate = pauses / total_sec * 60
+    bl.sample_sec = total_sec
+    return bl
+
+
+def _detrended_jitter(f0: "np.ndarray", times: "np.ndarray") -> float:
+    """去趋势 jitter：分离慢速语调曲线与快速生理性颤动。
+
+    原理：真紧张的声带颤动是 8-12Hz 快速振荡（帧间隔 25ms 足以采样），
+    而语调抑扬是 <4Hz 的慢速漂移。用滑动中值滤波拟合语调基线，
+    残差的平均绝对偏差 / 均值 = 快速 jitter。
+    """
+    import numpy as np
+
+    if len(f0) < 4:
+        diffs = np.abs(np.diff(f0))
+        return float(np.mean(diffs) / (np.mean(f0) + 1e-6)) if len(f0) > 1 else 0.0
+
+    # 滑动中值窗口 ≈ 0.4s（16 帧 @25ms）：能跟上 2.5Hz 以内的语调变化，
+    # 但不被 8Hz+ 的快速颤动带偏（中值对短振荡鲁棒）
+    win = 16
+    half = win // 2
+    trend = np.empty_like(f0)
+    for i in range(len(f0)):
+        lo = max(0, i - half)
+        hi = min(len(f0), i + half + 1)
+        trend[i] = np.median(f0[lo:hi])
+
+    resid = f0 - trend
+    return float(np.mean(np.abs(resid)) / (np.mean(f0) + 1e-6))
+
+
+def _estimate_f0_per_frame(frames, sr: int) -> tuple["list[float]", "list[float]"]:
     """每帧基频估计（归一化相似度，抗倍频）。
 
     sim(lag) = 1 - 2*sum(|x[n]-x[n+lag]|) / sum(x[n]^2 + x[n+lag]^2)
     同相（lag=周期）→ sim≈+1；反相（lag=半周期）→ sim≈-1。
     取相似度最大的 lag：半周期处被天然抑制，不会倍频。
+
+    返回 (f0 列表, 对应帧中心时间秒列表)。
     """
     import numpy as np
 
@@ -129,6 +214,7 @@ def _estimate_f0_per_frame(frames, sr: int) -> list[float]:
     e_threshold = np.max(energy) * 0.10
 
     f0s: list[float] = []
+    times: list[float] = []
     for i, frame in enumerate(frames):
         if energy[i] < e_threshold:
             continue  # 静音/清音帧跳过
@@ -146,4 +232,5 @@ def _estimate_f0_per_frame(frames, sr: int) -> list[float]:
         # 相似度足够（周期性显著）才算浊音帧；0.5 宽松阈值防漏检
         if best_lag > 0 and best_val > 0.5:
             f0s.append(sr / best_lag)
-    return f0s
+            times.append((i + 0.5) * FRAME_LEN / sr)
+    return f0s, times

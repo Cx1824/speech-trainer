@@ -27,6 +27,9 @@ _MIGRATIONS: dict[str, list[tuple[str, Column]]] = {
         ("duration_limit", Column("duration_limit", Integer, default=0)),
         ("started_at", Column("started_at", DateTime)),
     ],
+    "api_config": [
+        ("voice_baseline_json", Column("voice_baseline_json", Text, default="")),
+    ],
 }
 
 
@@ -45,7 +48,7 @@ def _apply_migrations(conn) -> None:
 class ApiConfigRow(Base):
     """AI API 配置（key-value 简化存储）。
 
-    单行存储，id=1。
+    单行存储，id=1。voice_baseline_json 存情绪 2.0 的个人声学基线（校准朗读产物）。
     """
 
     __tablename__ = "api_config"
@@ -54,6 +57,7 @@ class ApiConfigRow(Base):
     llm_json = Column(Text, default="")
     asr_json = Column(Text, default="")
     tts_json = Column(Text, default="")
+    voice_baseline_json = Column(Text, default="")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 

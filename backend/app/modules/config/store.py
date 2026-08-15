@@ -61,6 +61,31 @@ async def load_provider_config(
     return _provider_from_env(kind, settings)
 
 
+async def load_voice_baseline(db: AsyncSession) -> dict | None:
+    """读取个人声学基线（情绪 2.0 校准产物）。未校准/已清除返回 None。"""
+    row = await _get_row(db)
+    if row and row.voice_baseline_json:
+        try:
+            data = json.loads(row.voice_baseline_json)
+        except json.JSONDecodeError:
+            return None
+        # 清除时存的是空 dict {}；无有效字段视为未校准
+        if not data or "pitch_jitter" not in data:
+            return None
+        return data
+    return None
+
+
+async def save_voice_baseline(db: AsyncSession, baseline: dict) -> None:
+    """保存/覆盖个人声学基线（换人重新校准即覆盖）。"""
+    row = await _get_row(db)
+    if row is None:
+        row = ApiConfigRow(id=1, llm_json="", asr_json="", tts_json="", voice_baseline_json="")
+        db.add(row)
+    row.voice_baseline_json = json.dumps(baseline, ensure_ascii=False)
+    await db.commit()
+
+
 # ---- 内部 ----
 
 async def _get_row(db: AsyncSession) -> Optional[ApiConfigRow]:

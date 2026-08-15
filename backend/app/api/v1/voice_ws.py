@@ -74,12 +74,142 @@ def detect_filler_words(text: str) -> list[dict]:
     return hits
 
 
+@router.websocket("/voice/calibrate")
+async def voice_calibrate_ws(websocket: WebSocket):
+    """声音校准通道：读一段校准文本 → 采集 PCM + ASR 字数 → 个人声学基线。
+
+    ⚠ 必须注册在 /voice/{sid} 之前，否则 "calibrate" 会被当成 sid 吞掉。
+
+    协议：
+    - 客户端 → 服务端：二进制 PCM 帧（同 /voice/{sid}）
+    - JSON {"type":"finish"}：客户端读完了，触发基线计算并落库
+    - 服务端 → 客户端：
+      * {"type":"calibration_result","payload":{...}}（ok/message/baseline）
+    """
+    await websocket.accept()
+    logger.info("Calibration WS connected")
+
+    from app.modules.analysis import CALIBRATION_TEXT, PcmFeatureBuffer, build_baseline
+    from app.modules.config.store import save_voice_baseline
+
+    session_factory = await get_db_session()
+    async with session_factory as db:
+        # 与面试通道同款 ASR 配置
+        try:
+            asr_cfg = await _get_asr_config(db)
+            if not asr_cfg.api_key:
+                raise ValueError("未配置 ASR API Key")
+        except Exception as e:
+            await websocket.send_text(json.dumps({
+                "type": "calibration_result",
+                "payload": {"ok": False, "message": f"校准需要语音识别服务：{e}"},
+            }))
+            await websocket.close()
+            return
+
+        calib_sentences: list[str] = []   # ASR 定稿句子（算字数）
+        pcm_buffer = PcmFeatureBuffer()
+        # 校准不按 ASR 断句切特征（断句粒度不可控），改为按时间窗切段：
+        # 每满 5s 的 PCM flush 一次特征，最终聚合
+        feats_list = []
+        pushed_samples = 0
+        SEGMENT_SAMPLES = 16000 * 5  # 5s 一段
+
+        def _on_final(t: str) -> None:
+            calib_sentences.append(t)
+
+        asr: RealtimeASRSession | None = None
+        try:
+            asr = RealtimeASRSession(asr_cfg.api_key, "paraformer-realtime-v2")
+            asr.on_final = _on_final
+            await asr.start()
+        except Exception as e:
+            await websocket.send_text(json.dumps({
+                "type": "calibration_result",
+                "payload": {"ok": False, "message": f"语音识别启动失败：{e}"},
+            }))
+            await websocket.close()
+            return
+
+        async def _finish() -> None:
+            """计算基线并落库，推送结果。"""
+            try:
+                # 剩余不足 5s 的 PCM 也算一段（音频 ≥0.5s 才出特征）
+                rest = pcm_buffer.flush()
+                if rest.duration_sec > 0:
+                    feats_list.append(rest)
+                char_count = sum(len(s) for s in calib_sentences)
+                bl = build_baseline(feats_list, char_count)
+                if not bl.is_valid():
+                    await websocket.send_text(json.dumps({
+                        "type": "calibration_result",
+                        "payload": {
+                            "ok": False,
+                            "message": f"朗读时长不足（{bl.sample_sec:.0f} 秒，需 ≥10 秒），请完整读完校准文本再试",
+                        },
+                    }))
+                    return
+                await save_voice_baseline(db, bl.to_dict())
+                await websocket.send_text(json.dumps({
+                    "type": "calibration_result",
+                    "payload": {
+                        "ok": True,
+                        "message": "校准完成，后续训练将按你的个人基线评估",
+                        "baseline": bl.to_dict(),
+                    },
+                }))
+                logger.info("声学基线已保存：%s", bl.to_dict())
+            except Exception:
+                logger.exception("基线计算失败")
+                await websocket.send_text(json.dumps({
+                    "type": "calibration_result",
+                    "payload": {"ok": False, "message": "基线计算失败，请重试"},
+                }))
+
+        try:
+            while True:
+                msg = await websocket.receive()
+                if msg.get("type") == "websocket.receive":
+                    if "bytes" in msg and msg["bytes"]:
+                        await asr.push_audio(msg["bytes"])
+                        pcm_buffer.push(msg["bytes"])
+                        pushed_samples += len(msg["bytes"]) // 2
+                        # 每满 5s 切一段特征（滑动累积，不重叠）
+                        if pushed_samples >= SEGMENT_SAMPLES:
+                            feats_list.append(pcm_buffer.flush())
+                            pushed_samples = 0
+                    elif "text" in msg and msg["text"]:
+                        try:
+                            m = json.loads(msg["text"])
+                        except json.JSONDecodeError:
+                            continue
+                        if m.get("type") == "finish":
+                            await _finish()
+                            break
+                elif msg.get("type") == "websocket.disconnect":
+                    break
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            logger.exception("calibration ws 异常")
+        finally:
+            await asr.close()
+            logger.info("Calibration WS disconnected")
+
+
 @router.websocket("/voice/{sid}")
 async def voice_ws(websocket: WebSocket, sid: str):
     await websocket.accept()
     logger.info("Voice WS connected: sid=%s", sid)
 
+    # 情绪 2.0：个人基线（校准朗读产物）+ 会话级平滑器
+    from app.modules.analysis import EmotionSmoother, VoiceBaseline
+    from app.modules.config.store import load_voice_baseline
+
     session_factory = await get_db_session()
+    baseline_dict = None
+    emotion_smoother = EmotionSmoother()
+
     async with session_factory as db:
         # 校验会话
         try:
@@ -88,6 +218,13 @@ async def voice_ws(websocket: WebSocket, sid: str):
             await websocket.send_text(envelope(ServerMsgType.ERROR, message=f"会话不存在：{e}"))
             await websocket.close()
             return
+
+        # 个人声学基线（情绪 2.0）：校准过才有
+        try:
+            baseline_dict = await load_voice_baseline(db)
+        except Exception:
+            logger.exception("读取声学基线失败（按默认基线运行）")
+        baseline = VoiceBaseline.from_dict(baseline_dict) if baseline_dict else None
 
         # 本轮回答的累计状态（每句实时分析 + 累计文本）
         turn_sentences: list[str] = []
@@ -138,7 +275,15 @@ async def voice_ws(websocket: WebSocket, sid: str):
                 text_res = analyze_text(t)
                 # 声学特征（音频不足 0.5s 时 feats=None，回落纯文本判定）
                 _, voice_feats = pcm_buffer.tension()
-                emotion = analyze_emotion(text_res, voice_feats)
+                # 情绪 2.0：语速信号（ASR 字数 ÷ 本句音频时长）
+                speech_rate = None
+                if voice_feats and voice_feats.duration_sec > 0:
+                    speech_rate = len(t) / voice_feats.duration_sec
+                emotion = analyze_emotion(
+                    text_res, voice_feats,
+                    baseline=baseline, speech_rate=speech_rate,
+                    smoother=emotion_smoother,
+                )
                 _safe_send(websocket, envelope(ServerMsgType.ANALYSIS_UPDATE, **{
                     "sentence": t,
                     "warning_level": text_res.warning_level,
@@ -152,14 +297,14 @@ async def voice_ws(websocket: WebSocket, sid: str):
                     "tension_level": emotion.tension_level,
                     "confidence_score": emotion.confidence_score,
                     "confidence_level": emotion.confidence_level,
+                    "calibrated": emotion.calibrated,
+                    "factors": emotion.factors,
                     # 声学明细（前端可展示"为什么紧张"）
                     **({
                         "voice_signal": True,
                         "pitch_jitter": round(voice_feats.pitch_jitter, 4),
                         "pause_count": voice_feats.pause_count,
-                        "speech_rate_estimate": round(
-                            len(t) / voice_feats.duration_sec * 60, 1
-                        ) if voice_feats.duration_sec > 0 else 0,
+                        "speech_rate_estimate": round(speech_rate * 60, 1) if speech_rate else 0,
                     } if voice_feats else {"voice_signal": False}),
                 }))
             except Exception:
@@ -226,7 +371,7 @@ async def voice_ws(websocket: WebSocket, sid: str):
                         await asr.push_audio(msg["bytes"])
                         pcm_buffer.push(msg["bytes"])  # 旁路：声学紧张度用
                     elif "text" in msg and msg["text"]:
-                        await _handle_json(websocket, db, sid, msg["text"], turn_sentences, pcm_buffer)
+                        await _handle_json(websocket, db, sid, msg["text"], turn_sentences, pcm_buffer, baseline=baseline, smoother=emotion_smoother)
                 elif msg.get("type") == "websocket.disconnect":
                     break
         except WebSocketDisconnect:
@@ -248,7 +393,7 @@ def _safe_send(websocket: WebSocket, text: str) -> None:
         pass
 
 
-async def _handle_json(websocket: WebSocket, db, sid: str, raw: str, turn_sentences: list[str], pcm_buffer=None) -> None:
+async def _handle_json(websocket: WebSocket, db, sid: str, raw: str, turn_sentences: list[str], pcm_buffer=None, baseline=None, smoother=None) -> None:
     try:
         msg = json.loads(raw)
     except json.JSONDecodeError:
@@ -257,13 +402,13 @@ async def _handle_json(websocket: WebSocket, db, sid: str, raw: str, turn_senten
 
     if mtype == "commit_answer":
         text = msg.get("payload", {}).get("text", "")
-        await _commit_answer(websocket, db, sid, text, pcm_buffer=pcm_buffer)
+        await _commit_answer(websocket, db, sid, text, pcm_buffer=pcm_buffer, baseline=baseline, smoother=smoother)
         turn_sentences.clear()
     elif mtype == "start_stage":
         await _auto_next_question(websocket, db, sid)
     elif mtype == "finish_stage":
         # 限时场景：用户讲完本阶段（或计时器到点）→ 推进到下一阶段
-        await _finish_stage(websocket, db, sid, turn_sentences, pcm_buffer)
+        await _finish_stage(websocket, db, sid, turn_sentences, pcm_buffer, baseline=baseline, smoother=smoother)
     elif mtype == "end_interview":
         from sqlalchemy import select
         res = await db.execute(select(InterviewSessionRow).where(InterviewSessionRow.id == sid))
@@ -276,11 +421,11 @@ async def _handle_json(websocket: WebSocket, db, sid: str, raw: str, turn_senten
     # skip_tts 等其他消息暂不处理
 
 
-async def _finish_stage(websocket: WebSocket, db, sid: str, turn_sentences: list[str], pcm_buffer=None) -> None:
+async def _finish_stage(websocket: WebSocket, db, sid: str, turn_sentences: list[str], pcm_buffer=None, baseline=None, smoother=None) -> None:
     """限时场景结束当前阶段：先落库本轮已说的内容，再推进阶段。"""
     if turn_sentences:
         text = "".join(turn_sentences)
-        await _commit_answer(websocket, db, sid, text, advance=False, pcm_buffer=pcm_buffer)
+        await _commit_answer(websocket, db, sid, text, advance=False, pcm_buffer=pcm_buffer, baseline=baseline, smoother=smoother)
         turn_sentences.clear()
     session = await interview.advance_stage(db, sid)
     await websocket.send_text(envelope(ServerMsgType.STAGE_CHANGED, stage=session.current_stage))
@@ -293,7 +438,7 @@ async def _finish_stage(websocket: WebSocket, db, sid: str, turn_sentences: list
 
 async def _commit_answer(
     websocket: WebSocket, db, sid: str, text: str,
-    advance: bool = True, pcm_buffer=None,
+    advance: bool = True, pcm_buffer=None, baseline=None, smoother=None,
 ) -> None:
     """提交回答（分析已逐句推送过）。advance=True 时自动生成下一题。"""
     if not text.strip():
@@ -304,7 +449,14 @@ async def _commit_answer(
     voice_feats = None
     if pcm_buffer is not None:
         _, voice_feats = pcm_buffer.tension()  # 冲掉缓冲里最后一段（<0.5s 返回 None）
-    emotion = analyze_emotion(text_res, voice_feats)
+    # 情绪 2.0：整轮语速 + 基线 + 平滑
+    speech_rate = None
+    if voice_feats and voice_feats.duration_sec > 0:
+        speech_rate = len(text) / voice_feats.duration_sec
+    emotion = analyze_emotion(
+        text_res, voice_feats,
+        baseline=baseline, speech_rate=speech_rate, smoother=smoother,
+    )
     analysis_payload = {
         "text": text,
         "warning_level": text_res.warning_level,
@@ -319,6 +471,8 @@ async def _commit_answer(
         "confidence_score": emotion.confidence_score,
         "confidence_level": emotion.confidence_level,
         "voice_signal": voice_feats is not None,
+        "calibrated": emotion.calibrated,
+        "factors": emotion.factors,
         **({
             "pitch_jitter": round(voice_feats.pitch_jitter, 4),
             "pause_count": voice_feats.pause_count,
@@ -384,3 +538,4 @@ async def _stream_tts(websocket: WebSocket, db, text: str) -> None:
             ))
     except Exception as e:
         logger.warning("流式 TTS 失败（不影响文字流程）：%s", e)
+

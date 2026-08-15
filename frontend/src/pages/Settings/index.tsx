@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Card, Form, Input, Select, Button, Tabs, Alert, Space, message } from 'antd'
 import { apiService } from '@/services/api'
 import type { ApiConfigOut, ApiConfigIn, ProviderConfigIn, ProviderStatus } from '@/types/api'
+import VoiceCalibration from '@/components/VoiceCalibration'
 
 const LLM_PROVIDERS = [
   { value: 'custom', label: '自定义（OpenAI 兼容协议）' },
@@ -180,6 +181,7 @@ export default function Settings() {
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto' }}>
+      <VoiceCalibration />
       <Card title="AI 模型配置">
         <Tabs
           items={[
