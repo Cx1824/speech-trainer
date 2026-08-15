@@ -53,6 +53,8 @@ class ServerMsgType(str, Enum):
     ANALYSIS_UPDATE = "analysis_update"       # 实时分析推送（口癖/重复/情绪）
     EMOTION_UPDATE = "emotion_update"
     TIME_UP = "time_up"                       # 限时场景到点（汇报/演讲）
+    LIVE_METRICS = "live_metrics"             # 实时指标（语速/紧张度，说话中滚动刷新）
+    LIVE_FEEDBACK = "live_feedback"           # 即时反馈（词级/节奏，不等句子定稿）
     ERROR = "error"
 
 

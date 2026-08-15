@@ -645,13 +645,17 @@ export default function Interview() {
       })
     }
 
-    const feedbackMeta: Record<string, { label: string; color: string; bg: string }> = {
-      filler: { label: '口头禅', color: '#d48806', bg: '#fffbe6' },
-      repeat: { label: '重复用词', color: '#cf1322', bg: '#fff1f0' },
-      hedge: { label: '模糊表述', color: '#7c6fbb', bg: '#f9f0ff' },
-      uncertain: { label: '不自信', color: '#d4380d', bg: '#fff2e8' },
-      long_sentence: { label: '句子过长', color: '#5b8c00', bg: '#f6ffed' },
+    const feedbackMeta: Record<string, { label: string; color: string; bg: string; icon: string }> = {
+      filler: { label: '口头禅', color: '#d48806', bg: '#fffbe6', icon: '🗣' },
+      repeat: { label: '重复用词', color: '#cf1322', bg: '#fff1f0', icon: '🔁' },
+      hedge: { label: '模糊表述', color: '#7c6fbb', bg: '#f9f0ff', icon: '❓' },
+      uncertain: { label: '不自信', color: '#d4380d', bg: '#fff2e8', icon: '😰' },
+      long_sentence: { label: '句子过长', color: '#5b8c00', bg: '#f6ffed', icon: '📏' },
+      silence: { label: '冷场', color: '#0958d9', bg: '#e6f4ff', icon: '⏸' },
+      no_breath: { label: '该换气', color: '#08979c', bg: '#e6fffb', icon: '💨' },
+      fast_run: { label: '语速偏快', color: '#d46b08', bg: '#fff7e6', icon: '⏩' },
     }
+    const liveCount = vs.feedbacks.filter((f) => f.live).length
     const topFillers = Object.entries(vs.fillerTotals)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 8)
@@ -767,7 +771,13 @@ export default function Interview() {
           </Card>
 
           <Card
-            title={`实时表达反馈${vs.issueCount > 0 ? `（本轮 ${vs.issueCount} 处）` : ''}`}
+            title={
+              <span>
+                实时表达反馈{vs.issueCount > 0 ? `（本轮 ${vs.issueCount} 处` : '（'}
+                {liveCount > 0 ? ` · ⚡即时 ${liveCount}` : ''}
+                {vs.issueCount > 0 || liveCount > 0 ? '）' : ''}
+              </span>
+            }
             size="small"
             bodyStyle={{ maxHeight: 480, overflowY: 'auto' }}
           >
@@ -793,25 +803,36 @@ export default function Interview() {
               </div>
             )}
             {vs.feedbacks.length === 0 ? (
-              <Text type="secondary" style={{ fontSize: 12 }}>暂无问题——口头禅、重复用词、模糊表述、不自信语气、句子过长都会在这里实时标注</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                暂无问题——口癖、重复、模糊、超长句说出口 1 秒内⚡提示；语速过快、该换气、冷场也会即时提醒
+              </Text>
             ) : (
               [...vs.feedbacks].reverse().map((f) => {
                 const fm = feedbackMeta[f.kind] || feedbackMeta.filler
+                const clock = new Date(f.ts)
+                const hhmmss = `${String(clock.getHours()).padStart(2, '0')}:${String(clock.getMinutes()).padStart(2, '0')}:${String(clock.getSeconds()).padStart(2, '0')}`
                 return (
                   <div
                     key={f.id}
                     style={{
                       marginBottom: 8, padding: '6px 8px', borderRadius: 6,
                       background: fm.bg, fontSize: 12,
+                      borderLeft: f.live ? '2px solid #faad14' : undefined,
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13 }}>{fm.icon}</span>
                       <Tag color={fm.color} style={{ fontSize: 11, marginInlineEnd: 0 }}>{fm.label}</Tag>
                       {f.word && <Text strong>「{f.word}」{f.count && f.count > 1 ? `×${f.count}` : ''}</Text>}
+                      <span style={{ marginLeft: 'auto', color: '#bbb', fontSize: 10 }}>
+                        {f.live ? '⚡ ' : '句析 '}{hhmmss}
+                      </span>
                     </div>
-                    <div style={{ color: '#666', marginTop: 4, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                      {f.sentence}
-                    </div>
+                    {!f.live && f.sentence && (
+                      <div style={{ color: '#666', marginTop: 4, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {f.sentence}
+                      </div>
+                    )}
                     {f.advice && (
                       <div style={{ color: '#0e7490', marginTop: 3, fontSize: 11 }}>
                         💡 {f.advice}
@@ -825,7 +846,7 @@ export default function Interview() {
         </div>
 
         <div style={{ marginTop: 12 }}>
-          <EmotionIndicator data={emotion} />
+          <EmotionIndicator data={emotion} live={vs.liveMetrics} />
         </div>
       </div>
     )

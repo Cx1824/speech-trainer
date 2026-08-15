@@ -17,6 +17,21 @@ export interface EmotionData {
   calibrated?: boolean
 }
 
+/** 实时指标（说话中滚动刷新，来自 live_metrics） */
+export interface LiveMetricsData {
+  speechRate: number | null       // 字/分
+  speechRateLevel: 'fast' | 'normal' | 'slow' | 'unknown'
+  tensionScore: number | null
+  speechSec: number
+}
+
+const RATE_LABEL: Record<string, { text: string; color: string }> = {
+  fast: { text: '偏快', color: '#d46b08' },
+  normal: { text: '适中', color: '#52c41a' },
+  slow: { text: '偏慢', color: '#1677ff' },
+  unknown: { text: '…', color: '#999' },
+}
+
 /** 紧张度因子中文名 */
 const FACTOR_LABELS: Record<string, string> = {
   jitter: '声音颤抖',
@@ -73,7 +88,7 @@ function explainFactors(factors: Record<string, number> | undefined, tension: nu
   return `主要贡献：${parts.join(' · ')}（分值越大影响越大）`
 }
 
-export default function EmotionIndicator({ data }: { data: EmotionData | null }) {
+export default function EmotionIndicator({ data, live }: { data: EmotionData | null; live?: LiveMetricsData | null }) {
   const tension = data?.tensionScore ?? 0
   const confidence = data?.confidenceScore ?? 0
   const { tensionTip, tensionAdvice, confTip, confAdvice } = interpret(tension, confidence)
@@ -89,6 +104,36 @@ export default function EmotionIndicator({ data }: { data: EmotionData | null })
           ）
         </span>
       </h4>
+
+      {/* 实时条：说话中滚动刷新（不等句子定稿） */}
+      {live && (live.speechRate !== null || live.tensionScore !== null) && (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+            padding: '6px 10px', marginBottom: 10, borderRadius: 6,
+            background: '#f0f7ff', fontSize: 13,
+          }}
+        >
+          <span style={{ color: '#1677ff' }}>⚡ 实时</span>
+          {live.speechRate !== null && (
+            <span>
+              语速 <b>{Math.round(live.speechRate)}</b> 字/分
+              <span style={{ color: RATE_LABEL[live.speechRateLevel]?.color, marginLeft: 4, fontSize: 12 }}>
+                （{RATE_LABEL[live.speechRateLevel]?.text}）
+              </span>
+            </span>
+          )}
+          {live.tensionScore !== null && (
+            <span>
+              紧张度 <b>{Math.round(live.tensionScore)}</b>
+              <span style={{ fontSize: 11, color: '#999', marginLeft: 2 }}>/100</span>
+            </span>
+          )}
+          {live.speechSec > 0 && (
+            <span style={{ color: '#999', fontSize: 11 }}>{live.speechSec.toFixed(0)}s</span>
+          )}
+        </div>
+      )}
 
       <div className="metric">
         <div className="metric-label">

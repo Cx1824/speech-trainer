@@ -228,39 +228,69 @@ async def voice_ws(websocket: WebSocket, sid: str):
 
         # 本轮回答的累计状态（每句实时分析 + 累计文本）
         turn_sentences: list[str] = []
-        # partial 阶段已提示过的词（ASR partial 是句内累积文本，防止同一词反复推送）
-        partial_notified: set[str] = set()
         # 声学特征旁路缓冲：与 ASR 同一份 PCM，句子定稿时算真实紧张度
-        from app.modules.analysis.pcm_features import PcmFeatureBuffer
+        from app.modules.analysis.pcm_features import LivePcmTracker, PcmFeatureBuffer
         pcm_buffer = PcmFeatureBuffer()
+        # 实时追踪：说话中滚动刷新语速/紧张度（不等定稿）
+        live_tracker = LivePcmTracker(window_sec=8.0)
+        live_chars_holder = [0]   # 当前句已识别字数（partial 回调写入，节奏检测读取）
+        from app.modules.analysis.live_feedback import LiveFeedbackEngine
+        live_engine = LiveFeedbackEngine()
+        import time as _time
+        last_metrics_push = 0.0  # live_metrics 节流
+        last_rhythm_check = 0.0  # 节奏检测节流
 
         def _on_asr_partial(t: str) -> None:
-            """增量字幕：立即推送；首次出现的口癖词即时提示一次（不累计计数）。"""
+            """增量字幕 + 实时指标 + 词级即时反馈（全部不等句子定稿）。"""
+            nonlocal last_metrics_push
             _safe_send(websocket, envelope(
                 ServerMsgType.SPEECH_RECOGNIZED, text=t, is_final=False))
-            # partial 阶段：仅对"首次出现"的口癖/模糊词做一次提示（计数以 final 为准）
             try:
-                from app.modules.analysis.text_rules import FILLER_WORDS, HEDGING_WORDS
-                first_words = [
-                    w for w in {**FILLER_WORDS, **HEDGING_WORDS}
-                    if w in t and w not in partial_notified
-                ]
-                if first_words:
-                    for w in first_words:
-                        partial_notified.add(w)
-                    _safe_send(websocket, envelope(ServerMsgType.ANALYSIS_UPDATE, **{
-                        "partial_check": True,
-                        "sentence": t,
-                        "warning_level": "filler",
-                        "filler_hits": [{"word": w, "count": 1, "weight": 2} for w in first_words],
-                        "hedge_hits": [],
-                        "uncertain_hits": [],
-                        "repeated_words": [],
-                        "long_sentences": [],
-                        "repetition_rate": 0.0,
-                    }))
+                # ① 词级即时反馈：口癖/模糊词说出口 ~1s 内提示（含冷却）
+                for fb in live_engine.on_partial(t):
+                    _safe_send(websocket, envelope(
+                        ServerMsgType.LIVE_FEEDBACK, **fb))
+                live_chars_holder[0] = len(t)  # 节奏检测用（当前句字数）
+                # ② 实时指标（300ms 节流）：语速（字/发音秒）+ 实时紧张度
+                now = _time.monotonic()
+                if now - last_metrics_push >= 0.3:
+                    last_metrics_push = now
+                    speech_sec = live_tracker.speech_sec
+                    rate = (len(t) / speech_sec) if speech_sec >= 1.0 else None
+                    _push_live_metrics(rate)
             except Exception:
                 pass
+
+        def _push_live_metrics(rate: float | None) -> None:
+            """实时语速 + 窗口紧张度推送（EMA 平滑在 analyze_emotion 内）。"""
+            try:
+                feats = live_tracker.snapshot(5.0)
+                tension = None
+                if feats.duration_sec >= 2.0:
+                    from app.modules.analysis.voice_features import compute_tension_v2
+                    score, _ = compute_tension_v2(feats, baseline, rate)
+                    # 会话级平滑（与定稿分析共用 smoother，分数连续）
+                    tension = emotion_smoother.update(score)
+                _safe_send(websocket, envelope(
+                    ServerMsgType.LIVE_METRICS,
+                    speech_rate=round(rate * 60, 1) if rate else None,  # 字/分
+                    speech_rate_level=_rate_level(rate),
+                    tension_score=round(tension, 1) if tension is not None else None,
+                    speech_sec=round(live_tracker.speech_sec, 1),
+                ))
+            except Exception:
+                logger.debug("live_metrics 推送失败", exc_info=True)
+
+        def _rate_level(rate: float | None) -> str:
+            """语速相对基线的快慢标签。"""
+            base = baseline.speech_rate if baseline else 4.2
+            if rate is None:
+                return "unknown"
+            if rate > base * 1.15:
+                return "fast"
+            if rate < base * 0.85:
+                return "slow"
+            return "normal"
 
         def _on_asr_final(t: str) -> None:
             """句子定稿：①推送字幕 ②完整多维分析（口癖/模糊/不自信/重复/长句/情绪）。
@@ -268,7 +298,9 @@ async def voice_ws(websocket: WebSocket, sid: str):
             情绪融合真实声学信号：旁路 PCM 缓冲计算基频抖动/能量起伏/停顿 → 紧张度。
             """
             turn_sentences.append(t)
-            partial_notified.clear()
+            live_engine.reset_sentence()      # 句子级实时状态复位（超长句/重复扫描）
+            live_tracker.reset_speech_stats() # 语速统计归零（下一句重新计）
+            live_chars_holder[0] = 0
             _safe_send(websocket, envelope(
                 ServerMsgType.SPEECH_RECOGNIZED, text=t, is_final=True))
             try:
@@ -369,7 +401,23 @@ async def voice_ws(websocket: WebSocket, sid: str):
                 if msg.get("type") == "websocket.receive":
                     if "bytes" in msg and msg["bytes"]:
                         await asr.push_audio(msg["bytes"])
-                        pcm_buffer.push(msg["bytes"])  # 旁路：声学紧张度用
+                        pcm_buffer.push(msg["bytes"])   # 旁路：句子定稿声学特征
+                        live_tracker.push(msg["bytes"]) # 实时：说话中滚动指标
+                        # 节奏检测（250ms 节流）：快说/换气/冷场
+                        now = _time.monotonic()
+                        if now - last_rhythm_check >= 0.25:
+                            last_rhythm_check = now
+                            base_rate = baseline.speech_rate if baseline else 4.2
+                            speech_sec = live_tracker.speech_sec
+                            cur_rate = (live_chars_holder[0] / speech_sec) if speech_sec >= 1.0 else None
+                            for fb in live_engine.on_rhythm(
+                                speech_run_sec=live_tracker.current_speech_run_sec(),
+                                silence_sec=live_tracker.current_silence_sec(),
+                                speech_rate=cur_rate,
+                                base_rate=base_rate,
+                                speaking=True,
+                            ):
+                                _safe_send(websocket, envelope(ServerMsgType.LIVE_FEEDBACK, **fb))
                     elif "text" in msg and msg["text"]:
                         await _handle_json(websocket, db, sid, msg["text"], turn_sentences, pcm_buffer, baseline=baseline, smoother=emotion_smoother)
                 elif msg.get("type") == "websocket.disconnect":

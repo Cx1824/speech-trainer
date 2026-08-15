@@ -15,12 +15,21 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 /** 单条实时反馈（问题表述标注） */
 export interface FeedbackItem {
   id: string
-  kind: 'filler' | 'repeat' | 'hedge' | 'uncertain' | 'long_sentence'
+  kind: 'filler' | 'repeat' | 'hedge' | 'uncertain' | 'long_sentence' | 'silence' | 'no_breath' | 'fast_run'
   word?: string
   count?: number
   sentence: string
   advice?: string           // 改进建议
   ts: number
+  live?: boolean            // true=说话中即时反馈（⚡），false=句子定稿分析
+}
+
+/** 实时指标（说话中滚动刷新，不等句子定稿） */
+export interface LiveMetrics {
+  speechRate: number | null      // 字/分
+  speechRateLevel: 'fast' | 'normal' | 'slow' | 'unknown'
+  tensionScore: number | null    // 实时紧张度（EMA 平滑）
+  speechSec: number              // 本句已发音秒数
 }
 
 export interface VoiceSessionState {
@@ -35,6 +44,7 @@ export interface VoiceSessionState {
   fillerTotals: Record<string, number>  // 口头禅累计次数（每词每句只加一次的准确计数）
   issueCount: number                     // 本轮问题总数
   timeUp: boolean                        // 限时场景到点
+  liveMetrics: LiveMetrics | null        // 实时指标（语速/紧张度，说话中滚动）
 }
 
 const SILENCE_MS = 1200
@@ -58,6 +68,7 @@ export function useVoiceSession(
     fillerTotals: {},
     issueCount: 0,
     timeUp: false,
+    liveMetrics: null,
   })
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -200,6 +211,39 @@ export function useVoiceSession(
         onAnalysisRef.current?.(payload)
       }
       applyAnalysis(payload)
+    } else if (type === 'live_metrics') {
+      // 实时指标：说话中滚动刷新（语速/紧张度），不定稿
+      setStatus({
+        liveMetrics: {
+          speechRate: (payload.speech_rate as number | null) ?? null,
+          speechRateLevel: (payload.speech_rate_level as LiveMetrics['speechRateLevel']) || 'unknown',
+          tensionScore: (payload.tension_score as number | null) ?? null,
+          speechSec: (payload.speech_sec as number) || 0,
+        },
+      })
+    } else if (type === 'live_feedback') {
+      // 即时反馈：词级（口癖/模糊/重复/超长句）+ 节奏（快说/换气/冷场），⚡ 标记
+      const now = Date.now()
+      const fb: FeedbackItem = {
+        id: `lf-${now}-${Math.random().toString(36).slice(2, 7)}`,
+        kind: (payload.kind as FeedbackItem['kind']) || 'filler',
+        word: payload.word as string | undefined,
+        sentence: payload.advice as string,
+        advice: payload.advice as string,
+        ts: now,
+        live: true,
+      }
+      setState((s) => ({
+        ...s,
+        feedbacks: [...s.feedbacks, fb].slice(-50),
+        // 高亮词即时更新（口癖/模糊词）
+        highlightWords: (() => {
+          const hl = new Map(s.highlightWords)
+          if (fb.kind === 'filler' || fb.kind === 'hedge') hl.set(fb.word || '', fb.kind)
+          if (fb.kind === 'repeat') hl.set(fb.word || '', 'repeat')
+          return hl
+        })(),
+      }))
     } else if (type === 'ai_question') {
       // 问题文字先行显示（TTS 播报内容可能被 Qwen-Audio 微调，
       // 真正朗读的文字以 tts_audio 逐句 text 为准，见 enqueueTTS 的同步替换）
