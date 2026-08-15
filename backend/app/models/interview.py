@@ -14,6 +14,7 @@ class InterviewSessionRow(Base):
     __tablename__ = "interview_session"
 
     id = Column(String(36), primary_key=True)  # uuid
+    scenario = Column(String(32), nullable=False, default="interview")  # 场景：interview/presentation/speech
     position = Column(String(64), nullable=False)
     level = Column(String(32), nullable=False, default="中级")
     style = Column(String(32), nullable=False, default="professional")  # 面试官风格
@@ -22,6 +23,10 @@ class InterviewSessionRow(Base):
     jd_content = Column(Text, default="")               # JD 内容（手动粘贴或抓取结果）
     resume_file = Column(String(256), default="")
     resume_parsed_json = Column(Text, default="")
+    material_file = Column(String(256), default="")     # 汇报/演讲材料文件名
+    material_text = Column(Text, default="")            # 材料解析文本
+    duration_limit = Column(Integer, default=0)         # 时长上限（分钟），0=不限
+    started_at = Column(DateTime)                       # 正式开始回答时间（计时基准）
     status = Column(String(32), default="configuring")  # configuring/in_progress/completed/aborted
     current_stage = Column(String(32), default="")  # opening/self_intro/project/position/qa/report
     created_at = Column(DateTime, server_default=func.now())

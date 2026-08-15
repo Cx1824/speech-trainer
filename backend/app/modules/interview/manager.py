@@ -22,6 +22,13 @@ from app.modules.interview.prompts import build_messages
 from app.modules.interview.stages import STAGE_QUESTION_LIMIT, Stage, next_stage
 from app.providers import get_llm
 from app.schemas import InterviewConfigIn, InterviewSessionOut, ResumeStructured
+from datetime import datetime
+
+
+def _pack(row: InterviewSessionRow):
+    """按会话行取场景包（延迟导入避免循环依赖）。"""
+    from app.modules.scenarios import get_pack
+    return get_pack(row.scenario)
 
 
 async def create_session(
@@ -32,12 +39,14 @@ async def create_session(
     sid = str(uuid.uuid4())
     row = InterviewSessionRow(
         id=sid,
+        scenario=config.scenario or "interview",
         position=config.position or "未指定",
         level=config.level,
         style=config.style,
         company=config.company,
         jd_url=config.jd_url,
         jd_content=config.jd_content,
+        duration_limit=config.duration_limit or 0,
         status="configuring",
         current_stage="",
     )
@@ -88,6 +97,7 @@ async def update_session(
     company: str | None = None,
     jd_url: str | None = None,
     jd_content: str | None = None,
+    duration_limit: int | None = None,
 ) -> InterviewSessionOut:
     """更新会话配置字段（部分更新）。"""
     row = await _load_row(db, sid)
@@ -103,6 +113,8 @@ async def update_session(
         row.jd_url = jd_url
     if jd_content is not None:
         row.jd_content = jd_content
+    if duration_limit is not None:
+        row.duration_limit = duration_limit
     await db.commit()
     return _to_out(row)
 
@@ -123,6 +135,8 @@ async def start_interview(db: AsyncSession, sid: str) -> InterviewSessionOut:
 
     row.status = "in_progress"
     row.current_stage = Stage.OPENING.value
+    if not row.started_at:
+        row.started_at = datetime.now()
     await db.commit()
     return _to_out(row)
 
@@ -154,7 +168,10 @@ async def generate_next(
     sid: str,
     llm_api: Any | None = None,
 ) -> str:
-    """生成下一题（基于当前阶段与历史）。
+    """生成下一句话（基于场景包 + 当前阶段与历史）。
+
+    分发规则：非面试场景走 scenarios 包的 prompt_builder；
+    面试场景回落到原有 interview/prompts.py 逻辑，行为不变。
 
     Args:
         llm_api: 可注入的 LLM 调用函数，用于解耦测试。不传则从配置加载。
@@ -166,20 +183,39 @@ async def generate_next(
     if row.status != "in_progress":
         raise InterviewError(f"会话不在进行中：{row.status}")
 
-    stage = Stage(row.current_stage)
     dialogues = await _load_dialogues(db, sid)
+    history = [{"role": d.role, "text": d.text} for d in dialogues]
     resume = json.loads(row.resume_parsed_json) if row.resume_parsed_json else None
 
-    messages = build_messages(
-        stage,
-        position=row.position,
-        level=row.level,
-        resume=resume,
-        dialogues=[{"role": d.role, "text": d.text} for d in dialogues],
-        style=row.style,
-        company=row.company,
-        jd_content=row.jd_content,
-    )
+    pack = _pack(row)
+    if pack.key == "interview":
+        stage = Stage(row.current_stage)
+        messages = build_messages(
+            stage,
+            position=row.position,
+            level=row.level,
+            resume=resume,
+            dialogues=history,
+            style=row.style,
+            company=row.company,
+            jd_content=row.jd_content,
+        )
+        stage_key = stage.value
+    else:
+        from app.modules.scenarios.base import ScenarioContext
+        stage_def = _get_stage_def(pack, row.current_stage)
+        ctx = ScenarioContext(
+            position=row.position,
+            level=row.level,
+            company=row.company,
+            jd_content=row.jd_content,
+            duration_limit=row.duration_limit or 0,
+            resume=resume,
+            material_text=row.material_text or "",
+            history=history,
+        )
+        messages = stage_def.prompt_builder(ctx)
+        stage_key = stage_def.key
 
     if llm_api is None:
         from app.modules.config import load_provider_config
@@ -200,7 +236,7 @@ async def generate_next(
             session_id=sid,
             seq=seq,
             role="ai",
-            stage=stage.value,
+            stage=stage_key,
             text=text,
         )
     )
@@ -209,12 +245,17 @@ async def generate_next(
 
 
 async def advance_stage(db: AsyncSession, sid: str) -> InterviewSessionOut:
-    """推进到下一阶段。"""
+    """推进到下一阶段（按场景包的 stages 顺序）。"""
     row = await _load_row(db, sid)
-    cur = Stage(row.current_stage)
-    nxt = next_stage(cur)
-    row.current_stage = nxt.value
-    if nxt == Stage.REPORT:
+    pack = _pack(row)
+    keys = [s.key for s in pack.stages]
+    if row.current_stage in keys:
+        idx = keys.index(row.current_stage)
+        nxt_key = keys[idx + 1] if idx + 1 < len(keys) else "report"
+    else:
+        nxt_key = keys[0]
+    row.current_stage = nxt_key
+    if nxt_key == "report":
         row.status = "completed"
     await db.commit()
     return _to_out(row)
@@ -226,15 +267,20 @@ async def should_advance(
 ) -> bool:
     """检查当前阶段问题数是否已达上限，需要推进。"""
     row = await _load_row(db, sid)
-    cur = Stage(row.current_stage)
-    limit = STAGE_QUESTION_LIMIT.get(cur, 1)
+    cur_key = row.current_stage
+    pack = _pack(row)
+    if pack.key == "interview":
+        cur = Stage(cur_key)
+        limit = STAGE_QUESTION_LIMIT.get(cur, 1)
+    else:
+        limit = _get_stage_def(pack, cur_key).question_limit
     if limit == 0:
         return False
     res = await db.execute(
         select(InterviewDialogueRow)
         .where(InterviewDialogueRow.session_id == sid)
         .where(InterviewDialogueRow.role == "ai")
-        .where(InterviewDialogueRow.stage == cur.value)
+        .where(InterviewDialogueRow.stage == cur_key)
     )
     ai_count = len(res.scalars().all())
     return ai_count >= limit
@@ -292,6 +338,14 @@ async def list_dialogues(db: AsyncSession, sid: str) -> list[dict]:
 
 # ---- 内部 ----
 
+def _get_stage_def(pack, stage_key: str):
+    """从场景包中取阶段定义，找不到抛错。"""
+    for s in pack.stages:
+        if s.key == stage_key:
+            return s
+    raise InterviewError(f"场景 {pack.key} 不存在阶段：{stage_key}")
+
+
 async def _load_row(db: AsyncSession, sid: str) -> InterviewSessionRow:
     res = await db.execute(select(InterviewSessionRow).where(InterviewSessionRow.id == sid))
     row = res.scalar_one_or_none()
@@ -318,6 +372,7 @@ def _to_out(row: InterviewSessionRow) -> InterviewSessionOut:
             resume_parsed = None
     return InterviewSessionOut(
         id=row.id,
+        scenario=row.scenario or "interview",
         position=row.position,
         level=row.level,
         style=row.style,
@@ -328,4 +383,8 @@ def _to_out(row: InterviewSessionRow) -> InterviewSessionOut:
         current_stage=row.current_stage,
         has_resume=bool(row.resume_parsed_json),
         resume_parsed=resume_parsed,
+        material_file=row.material_file or "",
+        has_material=bool(row.material_text),
+        duration_limit=row.duration_limit or 0,
+        started_at=row.started_at,
     )

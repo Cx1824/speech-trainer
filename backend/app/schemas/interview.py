@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pydantic import BaseModel, Field
 
 
@@ -16,18 +17,21 @@ class ResumeStructured(BaseModel):
 
 
 class InterviewConfigIn(BaseModel):
-    """创建面试会话。"""
+    """创建训练会话（三场景通用）。"""
 
-    position: str = Field(default="", description="岗位，可由简历解析后填充")
+    scenario: str = Field(default="interview", description="场景：interview/presentation/speech")
+    position: str = Field(default="", description="岗位/主题，可由简历解析后填充")
     level: str = Field(default="中级", description="职级")
     style: str = Field(default="professional", description="面试官风格")
     company: str = Field(default="", description="公司名称")
     jd_url: str = Field(default="", description="JD 链接")
     jd_content: str = Field(default="", description="JD 内容（手动粘贴或抓取结果）")
+    duration_limit: int = Field(default=0, ge=0, le=120, description="时长上限（分钟），0=不限")
 
 
 class InterviewSessionOut(BaseModel):
     id: str
+    scenario: str = "interview"
     position: str
     level: str
     style: str
@@ -38,6 +42,10 @@ class InterviewSessionOut(BaseModel):
     current_stage: str
     has_resume: bool = False
     resume_parsed: ResumeStructured | None = None
+    material_file: str = ""
+    has_material: bool = False
+    duration_limit: int = 0
+    started_at: datetime | None = None
 
 
 class FetchJDIn(BaseModel):

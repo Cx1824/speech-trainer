@@ -52,6 +52,7 @@ class ServerMsgType(str, Enum):
     SPEECH_RECOGNIZED = "speech_recognized"   # 给前端用作弹幕/显示
     ANALYSIS_UPDATE = "analysis_update"       # 实时分析推送（口癖/重复/情绪）
     EMOTION_UPDATE = "emotion_update"
+    TIME_UP = "time_up"                       # 限时场景到点（汇报/演讲）
     ERROR = "error"
 
 

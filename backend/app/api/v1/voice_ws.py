@@ -22,6 +22,7 @@ import re
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.database import get_db_session
+from app.models.interview import InterviewSessionRow
 from app.modules import interview
 from app.modules.analysis import analyze_emotion, analyze_text
 from app.modules.config import load_provider_config
@@ -30,6 +31,7 @@ from app.modules.interview.ws_protocol import (
     encode_audio,
     envelope,
 )
+from app.modules.scenarios import get_pack
 from app.providers import get_tts
 from app.providers.asr.dashscope_realtime import RealtimeASRSession
 from app.schemas import ProviderConfigIn
@@ -162,6 +164,23 @@ async def voice_ws(websocket: WebSocket, sid: str):
             await websocket.close()
             return
 
+        # 限时场景：到点自动结束（推送 time_up，并推进阶段）
+        timer_task: asyncio.Task | None = None
+        try:
+            from sqlalchemy import select as _select
+            _res = await db.execute(_select(InterviewSessionRow).where(InterviewSessionRow.id == sid))
+            _row = _res.scalar_one_or_none()
+            if _row and _row.duration_limit and _row.duration_limit > 0 and get_pack(_row.scenario).timed:
+
+                async def _on_time_up() -> None:
+                    await asyncio.sleep(_row.duration_limit * 60)
+                    _safe_send(websocket, envelope(ServerMsgType.TIME_UP,
+                                                   limit_minutes=_row.duration_limit))
+
+                timer_task = asyncio.create_task(_on_time_up())
+        except Exception:
+            logger.exception("启动计时器失败（不影响会话）")
+
         try:
             while True:
                 msg = await websocket.receive()
@@ -177,6 +196,8 @@ async def voice_ws(websocket: WebSocket, sid: str):
         except Exception:
             logger.exception("voice ws 异常")
         finally:
+            if timer_task and not timer_task.done():
+                timer_task.cancel()
             await asr.close()
             logger.info("Voice WS disconnected: sid=%s", sid)
 
@@ -202,8 +223,10 @@ async def _handle_json(websocket: WebSocket, db, sid: str, raw: str, turn_senten
         turn_sentences.clear()
     elif mtype == "start_stage":
         await _auto_next_question(websocket, db, sid)
+    elif mtype == "finish_stage":
+        # 限时场景：用户讲完本阶段（或计时器到点）→ 推进到下一阶段
+        await _finish_stage(websocket, db, sid, turn_sentences)
     elif mtype == "end_interview":
-        from app.models.interview import InterviewSessionRow
         from sqlalchemy import select
         res = await db.execute(select(InterviewSessionRow).where(InterviewSessionRow.id == sid))
         row = res.scalar_one_or_none()
@@ -215,8 +238,23 @@ async def _handle_json(websocket: WebSocket, db, sid: str, raw: str, turn_senten
     # skip_tts 等其他消息暂不处理
 
 
-async def _commit_answer(websocket: WebSocket, db, sid: str, text: str) -> None:
-    """前端 VAD 判定说完 → 提交回答（分析已逐句推送过）→ 自动生成下一题。"""
+async def _finish_stage(websocket: WebSocket, db, sid: str, turn_sentences: list[str]) -> None:
+    """限时场景结束当前阶段：先落库本轮已说的内容，再推进阶段。"""
+    if turn_sentences:
+        text = "".join(turn_sentences)
+        await _commit_answer(websocket, db, sid, text, advance=False)
+        turn_sentences.clear()
+    session = await interview.advance_stage(db, sid)
+    await websocket.send_text(envelope(ServerMsgType.STAGE_CHANGED, stage=session.current_stage))
+    if session.status == "completed":
+        await websocket.send_text(envelope(ServerMsgType.INTERVIEW_COMPLETED))
+        return
+    # 推进后自动生成下一阶段的 AI 发言（如评审质询/主持人收尾）
+    await _auto_next_question(websocket, db, sid)
+
+
+async def _commit_answer(websocket: WebSocket, db, sid: str, text: str, advance: bool = True) -> None:
+    """提交回答（分析已逐句推送过）。advance=True 时自动生成下一题。"""
     if not text.strip():
         return
 
@@ -239,6 +277,8 @@ async def _commit_answer(websocket: WebSocket, db, sid: str, text: str) -> None:
     }
     await interview.save_user_message(db, sid, text, analysis_payload)
 
+    if not advance:
+        return
     # 自动追问（核心：无需人工点下一题）
     await _auto_next_question(websocket, db, sid)
 
@@ -251,6 +291,17 @@ async def _auto_next_question(websocket: WebSocket, db, sid: str) -> None:
             if session.status == "completed":
                 await websocket.send_text(envelope(ServerMsgType.INTERVIEW_COMPLETED))
                 return
+
+        # 当前阶段不生成 AI 发言（如演讲 presenting 阶段）→ 只广播阶段，等用户讲完 finish_stage
+        session = await interview.get_session(db, sid)
+        from sqlalchemy import select
+        row = (await db.execute(select(InterviewSessionRow).where(InterviewSessionRow.id == sid))).scalar_one_or_none()
+        if row is not None:
+            pack = get_pack(row.scenario)
+            if pack.key != "interview":
+                stage_def = next((s for s in pack.stages if s.key == row.current_stage), None)
+                if stage_def is not None and stage_def.question_limit == 0:
+                    return
 
         text = await interview.generate_next(db, sid)
         session = await interview.get_session(db, sid)

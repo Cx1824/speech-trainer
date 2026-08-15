@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, func
+from sqlalchemy import Column, DateTime, Integer, String, Text, func, inspect, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -16,6 +16,30 @@ from app.config import get_settings
 
 class Base(DeclarativeBase):
     pass
+
+
+# 幂等迁移：给已有表补充缺失列（SQLite 的 create_all 不会 ALTER 旧表）
+_MIGRATIONS: dict[str, list[tuple[str, Column]]] = {
+    "interview_session": [
+        ("scenario", Column("scenario", String(32), nullable=False, default="interview")),
+        ("material_file", Column("material_file", String(256), default="")),
+        ("material_text", Column("material_text", Text, default="")),
+        ("duration_limit", Column("duration_limit", Integer, default=0)),
+        ("started_at", Column("started_at", DateTime)),
+    ],
+}
+
+
+def _apply_migrations(conn) -> None:
+    inspector = inspect(conn)
+    for table, columns in _MIGRATIONS.items():
+        if not inspector.has_table(table):
+            continue
+        existing = {c["name"] for c in inspector.get_columns(table)}
+        for name, col in columns:
+            if name not in existing:
+                col_type = col.type.compile(conn.dialect)
+                conn.execute(sa_text(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}"))
 
 
 class ApiConfigRow(Base):
@@ -37,12 +61,13 @@ engine: "async_sessionmaker[AsyncSession] | None" = None
 
 
 async def init_db() -> None:
-    """初始化数据库（幂等）。"""
+    """初始化数据库（幂等：建表 + 补列）。"""
     global engine
     settings = get_settings()
     eng = create_async_engine(settings.database_url, echo=False)
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_apply_migrations)
     engine = async_sessionmaker(eng, expire_on_commit=False)
 
 
