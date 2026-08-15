@@ -59,9 +59,10 @@ async def generate_report(db: AsyncSession, sid: str) -> dict[str, Any]:
     est_duration = _estimate_duration(session, total_words)
     speech_rate = compute_speech_rate(all_text, est_duration)
 
-    # 情绪综合
-    text_res = analyze_text(all_text)
-    emotion_overall = analyze_emotion(text_res, None)
+    # 情绪综合：优先聚合逐句落库的实时分析（含真实声学信号 + 个人基线校准），
+    # 而非无语音重算——后者 tension 起步即 40"偏紧"、文章修辞词被误判为用户
+    # 的模糊/口癖，对朗读型场景（演讲/汇报）系统性误伤
+    emotion_overall = _aggregate_emotion(dialogues, all_text)
 
     # 调 LLM 生成内容评分 + 建议（按场景）
     llm_summary = await _llm_evaluate(db, session, dialogues, pack)
@@ -112,6 +113,46 @@ async def generate_report(db: AsyncSession, sid: str) -> dict[str, Any]:
     return report
 
 
+def _aggregate_emotion(dialogues, all_text: str):
+    """聚合会话内逐句情绪结果（声学+文本，已按个人基线校准）。
+
+    每句 analysis_json 里有 tension/confidence score/level（说话时实时推送的同一份）。
+    无任何声学记录（纯文本会话/旧数据）时回落纯文本重算。
+    """
+    tensions: list[float] = []
+    confidences: list[float] = []
+    for d in dialogues:
+        if d.role != "user" or not d.analysis_json:
+            continue
+        try:
+            a = json.loads(d.analysis_json)
+        except Exception:
+            continue
+        if isinstance(a.get("tension_score"), (int, float)):
+            tensions.append(float(a["tension_score"]))
+        if isinstance(a.get("confidence_score"), (int, float)):
+            confidences.append(float(a["confidence_score"]))
+
+    if tensions or confidences:
+        from app.modules.analysis.emotion import _level
+
+        t = sum(tensions) / len(tensions) if tensions else 0.0
+        c = sum(confidences) / len(confidences) if confidences else 0.0
+        # 轻量命名空间对象，供报告字典直接取字段
+        class _Emotion:
+            def __init__(self, t: float, c: float) -> None:
+                self.tension_score = round(t, 1)
+                self.tension_level = _level(t, [40, 70], ["平稳", "偏紧", "高度紧张"])
+                self.confidence_score = round(c, 1)
+                self.confidence_level = _level(100 - c, [40, 70], ["强", "适中", "偏弱"])
+
+        return _Emotion(t, c)
+
+    # 回落：无逐句记录（旧会话/纯文本），保持原纯文本判定
+    text_res = analyze_text(all_text)
+    return analyze_emotion(text_res, None)
+
+
 def _estimate_duration(session: InterviewSessionRow, total_words: int) -> float:
     """估算实际用时（秒）：优先 started_at 真实值，回落字数估算。"""
     if session.started_at:
@@ -134,9 +175,17 @@ async def _llm_evaluate(
         [f"{pack.role_name if d.role == 'ai' else '我'}：{d.text}" for d in dialogues]
     )
 
-    # 按场景定制：身份、content_metrics 维度、专业建议指引
+    # 按场景定制：system 人格、content_metrics 维度、专业建议指引。
+    # 面试以外场景用独立评审人格（不用 get_style 面试官口吻评审演讲/汇报），
+    # 并明示"纯转写文本"口径——感染力/节奏只基于文字结构评估，
+    # 不因缺少语音信息而压分。
     if pack.key == "presentation":
         persona = "你是一名资深的管理咨询顾问，擅长评估工作汇报与述职表现。"
+        system_prompt = (
+            "你是一名资深的管理咨询顾问，为高管评估过多场工作汇报与述职。"
+            "你评估汇报时客观公正：既指出问题，也肯定亮点；"
+            "好的汇报与平均水平的汇报要能明确区分，不要一律从严挑刺。"
+        )
         metrics_def = """{
     "structure": {"score": 0-100, "feedback": "金字塔结构/结论先行"},
     "data_support": {"score": 0-100, "feedback": "数据与量化支撑"},
@@ -144,13 +193,21 @@ async def _llm_evaluate(
   }"""
     elif pack.key == "speech":
         persona = "你是一名资深演讲教练，曾指导过多场大型公开演讲。"
+        system_prompt = (
+            "你是一名资深的演讲教练，指导过多场大型公开演讲。"
+            "你评估演讲时客观公正：既指出问题，也肯定亮点；"
+            "优秀的演讲与平庸的演讲要能明确区分，不要一律从严挑刺。"
+            "注意：你只能看到演讲的文字转写，语气、感染力、台风等语音信息不可见，"
+            "请基于文字内容（结构、用词、金句、逻辑）评估，不要因缺少语音表现而扣分。"
+        )
         metrics_def = """{
-    "engagement": {"score": 0-100, "feedback": "感染力与观众连接"},
-    "pacing": {"score": 0-100, "feedback": "节奏与停顿"},
+    "engagement": {"score": 0-100, "feedback": "感染力与观众连接（基于文字内容评估）"},
+    "pacing": {"score": 0-100, "feedback": "节奏与停顿（基于句子长短与结构评估）"},
     "structure": {"score": 0-100, "feedback": "开场-主体-结尾的结构设计"}
   }"""
     else:  # interview
         persona = "你是一名资深面试官。"
+        system_prompt = get_style(session.style).system_prompt
         metrics_def = """{
     "project_familiarity": {"score": 0-100, "feedback": "..."},
     "logicality": {"score": 0-100, "feedback": "..."},
@@ -173,10 +230,14 @@ async def _llm_evaluate(
 训练记录：
 {dialogue_text[:6000]}
 
+评估要求：
+- 客观公正：先找亮点再指问题；表现确实好就给高分（85+），不要一律从严。
+- 只依据记录中真实出现的内容评分，不臆测未发生的问题。
+
 请返回严格的 JSON，字段如下：
 {{
   "overall_score": 0-100 的整数,
-  "summary": "一句话总评",
+  "summary": "一句话总评（先肯定亮点，再点主要问题）",
   "content_metrics": {metrics_def},
   "suggestions": {{
     "short_term": ["建议1", "建议2"],
@@ -196,10 +257,10 @@ professional_advice 必须覆盖以下 {pack.name} 专业维度，每个维度�
         from app.modules.config import load_provider_config
         cfg = await load_provider_config(db, "llm")
         provider = get_llm(cfg)
-        style_profile = get_style(session.style)
         raw = await provider.chat(
             [
-                {"role": "system", "content": style_profile.system_prompt},
+                # 面试=面试官风格；演讲/汇报=场景独立评审人格（口径见上）
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,
