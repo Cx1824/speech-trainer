@@ -1,0 +1,27 @@
+:root {
+  --color-bg: #f5f5f5;
+  --color-bg-dark: #0f1419;
+  --color-text: #1a1a1a;
+  --color-primary: #534ab7;
+  --color-border: #e5e5e5;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+}

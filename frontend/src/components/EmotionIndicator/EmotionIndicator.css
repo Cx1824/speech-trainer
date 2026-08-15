@@ -1,0 +1,69 @@
+.emotion-panel {
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  color: #fff;
+  min-width: 200px;
+}
+
+.emotion-panel h4 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.metric {
+  margin-bottom: 12px;
+}
+
+.metric:last-child {
+  margin-bottom: 0;
+}
+
+.metric-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.metric-level {
+  font-weight: 500;
+}
+
+.metric-level.good { color: #1d9e75; }
+.metric-level.warn { color: #fac775; }
+.metric-level.bad { color: #e24b4a; }
+
+.bar {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+.bar-fill.good { background: #1d9e75; }
+.bar-fill.warn { background: #fac775; }
+.bar-fill.bad { background: #e24b4a; }
+
+.metric-value {
+  font-size: 11px;
+  text-align: right;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.metric-tip {
+  font-size: 12px;
+  color: #666;
+  margin-top: 6px;
+  line-height: 1.5;
+  grid-column: 1 / -1;
+}
