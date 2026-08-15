@@ -1,8 +1,10 @@
-import { Card, Button, Typography, Row, Col, Tag } from 'antd'
+import { Button, Card, Col, Row, Tag, Typography } from 'antd'
+import { SoundOutlined, DownOutlined, UpOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { apiService } from '@/services/api'
 import type { ScenarioOut } from '@/types/interview'
+import VoiceCalibration from '@/components/VoiceCalibration'
 
 const { Title, Paragraph, Text } = Typography
 
@@ -16,6 +18,8 @@ const CARD_META: Record<string, { icon: string; color: string }> = {
 export default function Home() {
   const nav = useNavigate()
   const [scenarios, setScenarios] = useState<ScenarioOut[]>([])
+  const [calibrated, setCalibrated] = useState<boolean | null>(null)  // null=查询中
+  const [calibOpen, setCalibOpen] = useState(false)                   // 校准卡片展开
 
   useEffect(() => {
     apiService
@@ -29,6 +33,11 @@ export default function Home() {
           { key: 'speech', name: '演讲训练', role_name: '主持人', description: '限时演讲实战训练。', needs_resume: false, needs_material: true, timed: true },
         ])
       })
+    // 校准状态（null 时显示引导）
+    apiService
+      .getVoiceCalibration()
+      .then((r) => setCalibrated(r.calibrated))
+      .catch(() => setCalibrated(null))
   }, [])
 
   return (
@@ -37,6 +46,48 @@ export default function Home() {
       <Paragraph type="secondary">
         实时语音转写 + 表达多维分析 + 场景化专业报告。收音、实时反馈、报告核心链路三场景共用，仅训练侧重不同。
       </Paragraph>
+
+      {/* 声音校准引导：未校准时醒目提示；已校准提供管理入口 */}
+      {calibrated === false && (
+        <Card
+          size="small"
+          style={{ marginBottom: 16, borderColor: '#1677ff', background: '#f0f7ff' }}
+          styles={{ body: { padding: '12px 16px' } }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <SoundOutlined style={{ fontSize: 20, color: '#1677ff' }} />
+            <div style={{ flex: 1, minWidth: 260 }}>
+              <Text strong>先花 30 秒做个声音校准</Text>
+              <div style={{ fontSize: 13, color: '#666' }}>
+                朗读一小段文字，系统会记住你的语速、音调与停顿习惯——之后训练中的「紧张度」按你自己的基准评估，准得多。换人使用时重新校准即可。
+              </div>
+            </div>
+            <Button type="primary" onClick={() => setCalibOpen(true)}>
+              开始校准
+            </Button>
+          </div>
+        </Card>
+      )}
+      {calibrated === true && (
+        <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+          <Button
+            size="small"
+            type="text"
+            icon={<SoundOutlined />}
+            onClick={() => setCalibOpen((v) => !v)}
+          >
+            声音校准（已就绪）{calibOpen ? <UpOutlined /> : <DownOutlined />}
+          </Button>
+        </div>
+      )}
+      {calibOpen && (
+        <VoiceCalibration
+          onChanged={(ok) => {
+            setCalibrated(ok)
+            if (ok) setCalibOpen(false)  // 校准成功收起卡片，回到引导收起态
+          }}
+        />
+      )}
 
       <Row gutter={[16, 16]}>
         {scenarios.map((s) => {

@@ -24,7 +24,12 @@ interface CalibState {
   resultOk: boolean | null
 }
 
-export default function VoiceCalibration() {
+interface VoiceCalibrationProps {
+  /** 校准成功/清除后通知父级（首页引导条据此刷新） */
+  onChanged?: (calibrated: boolean) => void
+}
+
+export default function VoiceCalibration({ onChanged }: VoiceCalibrationProps) {
   const [st, setSt] = useState<CalibState>({
     loading: true,
     text: '',
@@ -103,6 +108,7 @@ export default function VoiceCalibration() {
             }))
             if (p.ok) message.success('校准完成')
             else message.warning(p.message)
+            onChanged?.(p.ok)
             stopCapture()
             ws.close()
             wsRef.current = null
@@ -152,6 +158,7 @@ export default function VoiceCalibration() {
       await apiService.resetVoiceCalibration()
       message.success('已清除基线')
       setSt((s) => ({ ...s, calibrated: false, baseline: null, resultOk: null, resultMsg: '' }))
+      onChanged?.(false)
     } catch (e) {
       message.error(`清除失败：${e}`)
     }
