@@ -1,10 +1,11 @@
-import type { ApiConfigOut, ApiConfigIn, ProviderConfigIn } from '@/types/api'
+import type { ApiConfigOut, ApiConfigIn } from '@/types/api'
 import type {
   InterviewSessionOut,
   DialogueOut,
   InterviewStyle,
   FetchJDOut,
   InterviewProfile,
+  ScenarioOut,
 } from '@/types/interview'
 
 const BASE = '/api/v1'
@@ -35,17 +36,20 @@ export const apiService = {
     request<{ ok: boolean; message: string }>(`/config/test/${kind}`, { method: 'POST' }),
 
   createInterview: (data: {
+    scenario?: string
     position?: string
     level?: string
     style?: string
     company?: string
     jd_url?: string
     jd_content?: string
+    duration_limit?: number
   }) =>
     request<InterviewSessionOut>('/interviews', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  listScenarios: () => request<{ scenarios: ScenarioOut[] }>('/interviews/scenarios'),
   updateInterview: (sid: string, data: Record<string, unknown>) =>
     request<InterviewSessionOut>(`/interviews/${sid}`, {
       method: 'PATCH',
@@ -63,6 +67,23 @@ export const apiService = {
     const fd = new FormData()
     fd.append('file', file)
     return fetch(`${BASE}/interviews/${sid}/resume`, { method: 'POST', body: fd }).then(async (r) => {
+      if (!r.ok) {
+        let msg = `HTTP ${r.status}`
+        try {
+          const body = await r.json()
+          msg = body.message ?? msg
+        } catch {
+          // ignore
+        }
+        throw new Error(msg)
+      }
+      return r.json() as Promise<InterviewSessionOut>
+    })
+  },
+  uploadMaterial: (sid: string, file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return fetch(`${BASE}/interviews/${sid}/material`, { method: 'POST', body: fd }).then(async (r) => {
       if (!r.ok) {
         let msg = `HTTP ${r.status}`
         try {

@@ -1,5 +1,6 @@
 export interface InterviewSessionOut {
   id: string
+  scenario: string
   position: string
   level: string
   style: string
@@ -10,6 +11,21 @@ export interface InterviewSessionOut {
   current_stage: string
   has_resume: boolean
   resume_parsed: ResumeStructured | null
+  material_file: string
+  has_material: boolean
+  duration_limit: number
+  started_at: string | null
+}
+
+/** 训练场景（首页卡片）。 */
+export interface ScenarioOut {
+  key: string
+  name: string
+  role_name: string
+  description: string
+  needs_resume: boolean
+  needs_material: boolean
+  timed: boolean
 }
 
 export interface FetchJDOut {
@@ -66,5 +82,26 @@ export const STAGE_LABELS: Record<string, string> = {
   project: '项目追问',
   position: '岗位能力题',
   qa: '反问环节',
-  report: '面试结束',
+  presenting: '汇报/演讲中',
+  ending: '收尾',
+  report: '训练结束',
+}
+
+/** 场景元信息（与后端场景包对齐，用于前端文案适配）。 */
+export const SCENARIOS: Record<string, { name: string; role: string; stageLabels: Record<string, string> }> = {
+  interview: {
+    name: '模拟面试',
+    role: '面试官',
+    stageLabels: {},
+  },
+  presentation: {
+    name: '工作汇报',
+    role: '评审',
+    stageLabels: { qa: '评审质询' },
+  },
+  speech: {
+    name: '演讲训练',
+    role: '主持人',
+    stageLabels: {},
+  },
 }

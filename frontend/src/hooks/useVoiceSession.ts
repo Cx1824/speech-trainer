@@ -34,6 +34,7 @@ export interface VoiceSessionState {
   highlightWords: Map<string, 'filler' | 'repeat' | 'hedge'>  // 当前轮需高亮的词
   fillerTotals: Record<string, number>  // 口头禅累计次数（每词每句只加一次的准确计数）
   issueCount: number                     // 本轮问题总数
+  timeUp: boolean                        // 限时场景到点
 }
 
 const SILENCE_MS = 1200
@@ -43,7 +44,7 @@ const RMS_SILENCE_THRESHOLD = 0.006
 export function useVoiceSession(
   sid: string | null,
   onAnalysis?: (payload: Record<string, unknown>) => void,
-  opts?: { manual?: boolean },  // manual=true：不自动提交（按钮触发），需手动停止/恢复采集
+  opts?: { manual?: boolean; autoResume?: boolean },  // manual=true：不自动提交；autoResume=true：manual 模式下 TTS 播完自动恢复采集（限时场景）
 ) {
   const [state, setState] = useState<VoiceSessionState>({
     status: 'idle',
@@ -56,6 +57,7 @@ export function useVoiceSession(
     highlightWords: new Map(),
     fillerTotals: {},
     issueCount: 0,
+    timeUp: false,
   })
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -83,6 +85,8 @@ export function useVoiceSession(
   onAnalysisRef.current = onAnalysis
   const manualRef = useRef(Boolean(opts?.manual))
   manualRef.current = Boolean(opts?.manual)
+  const autoResumeRef = useRef(Boolean(opts?.autoResume))
+  autoResumeRef.current = Boolean(opts?.autoResume)
 
   const setStatus = useCallback((patch: Partial<VoiceSessionState>) => {
     setState((s) => ({ ...s, ...patch }))
@@ -212,6 +216,9 @@ export function useVoiceSession(
     } else if (type === 'interview_completed') {
       forceEndedRef.current = true
       setStatus({ status: 'ended' })
+    } else if (type === 'time_up') {
+      // 限时场景到点：提示用户（由页面决定是否 finishStage）
+      setStatus({ timeUp: true })
     } else if (type === 'error') {
       setStatus({ error: payload.message as string, status: 'error' })
     }
@@ -327,9 +334,14 @@ export function useVoiceSession(
       finalTextRef.current = ''
       partialTextRef.current = ''
       if (manualRef.current) {
-        // 手动模式：挂起采集，等用户点"开始回答"
-        manualPausedRef.current = true
-        setStatus({ status: 'thinking', partialText: '', finalText: '' })
+        // 手动模式：挂起采集，等用户点"开始回答"（限时场景 autoResume 除外）
+        if (autoResumeRef.current) {
+          committingRef.current = false
+          setStatus({ status: 'listening', partialText: '', finalText: '' })
+        } else {
+          manualPausedRef.current = true
+          setStatus({ status: 'thinking', partialText: '', finalText: '' })
+        }
       } else {
         committingRef.current = false
         setStatus({ status: 'listening', partialText: '', finalText: '' })
@@ -362,6 +374,17 @@ export function useVoiceSession(
     commitTurn()
   }, [commitTurn])
 
+  /** 限时场景：讲完本阶段（落库已说内容，推进阶段） */
+  const finishStage = useCallback(() => {
+    wsRef.current?.send(JSON.stringify({ type: 'finish_stage' }))
+    // 阶段切换后清空字幕，反馈保留（跨阶段累计可见）
+    finalTextRef.current = ''
+    partialTextRef.current = ''
+    hasSpeechRef.current = false
+    committingRef.current = false
+    setStatus({ finalText: '', partialText: '', timeUp: false })
+  }, [])
+
   /** 结束面试 */
   const endInterview = useCallback(() => {
     wsRef.current?.send(JSON.stringify({ type: 'end_interview' }))
@@ -393,5 +416,5 @@ export function useVoiceSession(
 
   useEffect(() => stop, [])
 
-  return { state, start, stop, requestFirstQuestion, endInterview, resetFeedbacks, beginAnswer, commitAnswer }
+  return { state, start, stop, requestFirstQuestion, endInterview, resetFeedbacks, beginAnswer, commitAnswer, finishStage }
 }

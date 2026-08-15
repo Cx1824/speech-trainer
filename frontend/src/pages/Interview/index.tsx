@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Card, Form, Select, Upload, Button, Alert, Typography, Space, Tag, message, Input, Radio,
 } from 'antd'
@@ -8,11 +8,14 @@ import { apiService } from '@/services/api'
 import { useVoiceSession } from '@/hooks/useVoiceSession'
 import EmotionIndicator from '@/components/EmotionIndicator'
 import type { EmotionData } from '@/components/EmotionIndicator'
-import { type InterviewStyle } from '@/types/interview'
+import { type InterviewStyle, SCENARIOS } from '@/types/interview'
 
 const { Title, Paragraph, Text } = Typography
 
 const LEVELS = ['实习', '初级', '中级', '高级', '资深']
+
+/** 时长选项（分钟）：限时场景自选 */
+const DURATION_OPTIONS = [1, 2, 3, 5, 8, 10, 15, 20].map((m) => ({ value: m, label: `${m} 分钟` }))
 
 /** 面试档案（本地类型） */
 interface ProfileItem {
@@ -31,6 +34,13 @@ interface ProfileItem {
 
 export default function Interview() {
   const nav = useNavigate()
+  const [searchParams] = useSearchParams()
+  // 场景：interview（默认）/ presentation / speech
+  const scenario = searchParams.get('scenario') || 'interview'
+  const isInterview = scenario === 'interview'
+  const scenarioMeta = SCENARIOS[scenario] ?? SCENARIOS.interview
+  const isTimed = scenario === 'presentation' || scenario === 'speech'
+
   const [phase, setPhase] = useState<'config' | 'running'>('config')
   const [sid, setSid] = useState<string | null>(null)
   const [form] = Form.useForm()
@@ -41,12 +51,26 @@ export default function Interview() {
   const [fetchingJd, setFetchingJd] = useState(false)
   // 简历已上传解析的会话 sid（复用避免重复解析）
   const [resumeSid, setResumeSid] = useState<string | null>(null)
+  // 材料上传状态（汇报/演讲）
+  const [materialFile, setMaterialFile] = useState<File | null>(null)
+  const [materialUploaded, setMaterialUploaded] = useState(false)
   // 档案
   const [profiles, setProfiles] = useState<ProfileItem[]>([])
   const [saveName, setSaveName] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
 
   const [emotion, setEmotion] = useState<EmotionData | null>(null)
+  // 限时计时器
+  const [startedAt, setStartedAt] = useState<Date | null>(null)
+  const [durationLimit, setDurationLimit] = useState(0)
+  const [, setTick] = useState(0)  // 秒级刷新计时器显示
+  useEffect(() => {
+    if (phase !== 'running') return
+    const t = setInterval(() => setTick((x) => x + 1), 1000)
+    return () => clearInterval(t)
+  }, [phase])
+  const elapsedSecLocal = startedAt ? Math.max(0, Math.floor((Date.now() - startedAt.getTime()) / 1000)) : 0
+  const timeOverLocal = isTimed && durationLimit > 0 && elapsedSecLocal >= durationLimit * 60
   // 面试模式：true=语音对话（自动 VAD 提交）/ false=手动（按钮提交）。
   // 两种模式统一走 /ws/voice 语音链路（同一套字幕/分析/播报），仅提交方式不同。
   const [voiceMode, setVoiceMode] = useState(true)
@@ -57,13 +81,15 @@ export default function Interview() {
       confidenceScore: p.confidence_score as number,
       confidenceLevel: p.confidence_level as string,
     })
-  }, { manual: !voiceMode })
+  }, { manual: !voiceMode || isTimed, autoResume: isTimed })  // 限时：持续采集+按钮推进；手动面试：挂起+按钮恢复
 
-  // 加载风格列表 + 档案列表
+  // 加载风格列表 + 档案列表（仅面试场景加载档案）
   useEffect(() => {
-    apiService.listStyles().then((r) => setStyles(r.styles)).catch(() => {})
-    loadProfiles()
-  }, [])
+    if (isInterview) {
+      apiService.listStyles().then((r) => setStyles(r.styles)).catch(() => {})
+      loadProfiles()
+    }
+  }, [scenario])
 
   const loadProfiles = () => {
     apiService.listProfiles().then(setProfiles).catch(() => {})
@@ -224,39 +250,63 @@ export default function Interview() {
     }
   }
 
+  // 上传材料（汇报/演讲）：需先创建会话
+  const ensureSession = async (): Promise<string> => {
+    if (resumeSid) return resumeSid
+    const session = await apiService.createInterview({ scenario, style: 'professional' })
+    setResumeSid(session.id)
+    return session.id
+  }
+
+  const handleMaterialUpload = async (file: File) => {
+    setBusy(true)
+    try {
+      const sessionId = await ensureSession()
+      message.info('正在解析材料...')
+      await apiService.uploadMaterial(sessionId, file)
+      setMaterialFile(file)
+      setMaterialUploaded(true)
+      message.success('材料上传成功，AI 将基于材料提问/点评')
+    } catch (e: any) {
+      message.error(`材料上传失败：${e.message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   // 配置阶段开始流程
   const startFlow = async () => {
     const values = await form.validateFields()
     setBusy(true)
     try {
-      // 复用上传简历时创建的 sid，否则新建
+      // 复用上传简历/材料时创建的 sid，否则新建
       let sessionId: string
+      const commonFields = {
+        position: values.position,
+        company: values.company,
+        jd_url: jdUrl,
+        jd_content: values.jd_content,
+      }
       if (resumeSid) {
         sessionId = resumeSid
-        // 把表单字段同步到已有会话
         await apiService.updateInterview(sessionId, {
-          position: values.position,
-          level: values.level,
-          style: values.style,
-          company: values.company,
-          jd_url: jdUrl,
-          jd_content: values.jd_content,
+          ...commonFields,
+          ...(isInterview ? { level: values.level, style: values.style } : {}),
+          ...(isTimed ? { duration_limit: values.duration_limit ?? 0 } : {}),
         })
       } else {
         const session = await apiService.createInterview({
-          position: values.position,
-          level: values.level,
-          style: values.style,
-          company: values.company,
-          jd_url: jdUrl,
-          jd_content: values.jd_content,
+          ...commonFields,
+          scenario,
+          ...(isInterview ? { level: values.level, style: values.style } : {}),
+          ...(isTimed ? { duration_limit: values.duration_limit ?? 0 } : {}),
         })
         sessionId = session.id
       }
       await apiService.startInterview(sessionId)
       setSid(sessionId)
       setPhase('running')
-      message.success('面试开始')
+      message.success(`${scenarioMeta.name}开始`)
       // 两种模式统一走语音链路，由下方 voiceStartRef effect 在 sid 生效后自动启动
     } catch (e: any) {
       message.error(`启动失败：${e.message}`)
@@ -272,6 +322,11 @@ export default function Interview() {
     if (phase !== 'running' || !sid || voiceStartRef.current) return
     voiceStartRef.current = true
     endedHandledRef.current = false
+    // 计时基准：会话 started_at（后端 start 时写入），本地时钟偏差可接受
+    apiService.getInterview(sid).then((s) => {
+      if (s.started_at) setStartedAt(new Date(s.started_at))
+      if (s.duration_limit) setDurationLimit(s.duration_limit)
+    }).catch(() => {})
     ;(async () => {
       try {
         await voice.start(sid)
@@ -282,15 +337,26 @@ export default function Interview() {
     })()
   }, [phase, sid])
 
+  // 到点自动收尾：time_up 或本地倒计时归零 → 自动 finishStage（一次性）
+  const autoFinishedRef = useRef(false)
+  useEffect(() => {
+    if (phase !== 'running' || !isTimed || autoFinishedRef.current) return
+    if (voice.state.timeUp || timeOverLocal) {
+      autoFinishedRef.current = true
+      message.warning('时间到，自动进入下一环节')
+      voice.finishStage()
+    }
+  }, [voice.state.timeUp, timeOverLocal, phase])
+
   // 监听 ANALYSIS_UPDATE 消息 - 已经在前面通过 ws.subscribe 处理
 
   // ===== 配置阶段 UI =====
   if (phase === 'config') {
     return (
       <div style={{ maxWidth: 760, margin: '0 auto' }}>
-        <Title level={2}>面试训练配置</Title>
+        <Title level={2}>{scenarioMeta.name}配置</Title>
 
-        {profiles.length > 0 && (
+        {isInterview && profiles.length > 0 && (
           <Card title="我的档案（点击一键开练）" style={{ marginBottom: 16 }} size="small">
             {profiles.map((p) => (
               <div
@@ -325,131 +391,195 @@ export default function Interview() {
           <Form
             form={form}
             layout="vertical"
-            initialValues={{ position: '', level: '中级', style: 'professional', company: '', jd_content: '' }}
+            initialValues={{
+              position: '',
+              level: '中级',
+              style: 'professional',
+              company: '',
+              jd_content: '',
+              duration_limit: isTimed ? 5 : 0,
+            }}
           >
-            <Form.Item
-              label="上传简历（选填，自动识别岗位）"
-              extra={resumeParsed ? (
-                <Text type="success">已识别：{resumeParsed.position_guess} / {resumeParsed.level_guess}</Text>
-              ) : (
-                <Text type="secondary">支持 PDF/DOCX/TXT，未上传则手动选择岗位</Text>
-              )}
-            >
-              <Upload
-                maxCount={1}
-                beforeUpload={(file) => {
-                  handleResumeUpload(file)
-                  return false
-                }}
-                onRemove={() => { setResumeParsed(null) }}
-              >
-                <Button icon={<UploadOutlined />} loading={busy}>选择文件</Button>
-              </Upload>
-            </Form.Item>
+            {isInterview ? (
+              <>
+                <Form.Item
+                  label="上传简历（选填，自动识别岗位）"
+                  extra={resumeParsed ? (
+                    <Text type="success">已识别：{resumeParsed.position_guess} / {resumeParsed.level_guess}</Text>
+                  ) : (
+                    <Text type="secondary">支持 PDF/DOCX/TXT，未上传则手动选择岗位</Text>
+                  )}
+                >
+                  <Upload
+                    maxCount={1}
+                    beforeUpload={(file) => {
+                      handleResumeUpload(file)
+                      return false
+                    }}
+                    onRemove={() => { setResumeParsed(null) }}
+                  >
+                    <Button icon={<UploadOutlined />} loading={busy}>选择文件</Button>
+                  </Upload>
+                </Form.Item>
 
-            <Form.Item
-              label="岗位（选填）"
-              name="position"
-              extra={<Text type="secondary">留空时由简历或 JD 自动推断；可手动输入</Text>}
-            >
-              <Input
-                placeholder={resumeParsed ? '已从简历识别（可修改）' : '如：产品经理、前端工程师'}
-              />
-            </Form.Item>
+                <Form.Item
+                  label="岗位（选填）"
+                  name="position"
+                  extra={<Text type="secondary">留空时由简历或 JD 自动推断；可手动输入</Text>}
+                >
+                  <Input
+                    placeholder={resumeParsed ? '已从简历识别（可修改）' : '如：产品经理、前端工程师'}
+                  />
+                </Form.Item>
 
-            <Form.Item label="职级（选填）" name="level">
-              <Select
-                allowClear
-                placeholder="留空时由简历自动推断"
-                options={LEVELS.map((l) => ({ value: l, label: l }))}
-              />
-            </Form.Item>
+                <Form.Item label="职级（选填）" name="level">
+                  <Select
+                    allowClear
+                    placeholder="留空时由简历自动推断"
+                    options={LEVELS.map((l) => ({ value: l, label: l }))}
+                  />
+                </Form.Item>
 
-            <Form.Item label="目标公司（选填）" name="company">
-              <Input placeholder="如：字节跳动、阿里巴巴" />
-            </Form.Item>
+                <Form.Item label="目标公司（选填）" name="company">
+                  <Input placeholder="如：字节跳动、阿里巴巴" />
+                </Form.Item>
 
-            <Form.Item
-              label="JD 链接（选填）"
-              extra={<Text type="secondary">粘贴招聘网页 URL，点「抓取」自动填充下方 JD 内容</Text>}
-            >
-              <Space.Compact style={{ width: '100%' }}>
-                <Input
-                  placeholder="https://..."
-                  value={jdUrl}
-                  onChange={(e) => setJdUrl(e.target.value)}
-                />
-                <Button onClick={handleFetchJd} loading={fetchingJd}>抓取</Button>
-              </Space.Compact>
-            </Form.Item>
+                <Form.Item
+                  label="JD 链接（选填）"
+                  extra={<Text type="secondary">粘贴招聘网页 URL，点「抓取」自动填充下方 JD 内容</Text>}
+                >
+                  <Space.Compact style={{ width: '100%' }}>
+                    <Input
+                      placeholder="https://..."
+                      value={jdUrl}
+                      onChange={(e) => setJdUrl(e.target.value)}
+                    />
+                    <Button onClick={handleFetchJd} loading={fetchingJd}>抓取</Button>
+                  </Space.Compact>
+                </Form.Item>
 
-            <Form.Item
-              label="JD 内容（选填）"
-              name="jd_content"
-              extra={<Text type="secondary">可直接粘贴或编辑抓取结果。AI 会基于 JD 出题</Text>}
-            >
-              <Input.TextArea rows={4} placeholder="粘贴岗位描述、能力要求、加分项等" />
-            </Form.Item>
+                <Form.Item
+                  label="JD 内容（选填）"
+                  name="jd_content"
+                  extra={<Text type="secondary">可直接粘贴或编辑抓取结果。AI 会基于 JD 出题</Text>}
+                >
+                  <Input.TextArea rows={4} placeholder="粘贴岗位描述、能力要求、加分项等" />
+                </Form.Item>
 
-            <Form.Item
-              label="面试官风格"
-              name="style"
-              rules={[{ required: true }]}
-              extra={<Text type="secondary">不同风格对应不同的提问方式与压力程度</Text>}
-            >
-              <Radio.Group>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, width: '100%' }}>
-                  {styles.map((s) => (
-                    <Radio.Button
-                      key={s.name}
-                      value={s.name}
-                      style={{ height: 'auto', padding: '8px 12px', whiteSpace: 'normal', textAlign: 'left' }}
-                    >
-                      <div style={{ fontWeight: 500 }}>{s.label}</div>
-                      <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{s.description}</div>
-                    </Radio.Button>
-                  ))}
+                <Form.Item
+                  label="面试官风格"
+                  name="style"
+                  rules={[{ required: true }]}
+                  extra={<Text type="secondary">不同风格对应不同的提问方式与压力程度</Text>}
+                >
+                  <Radio.Group>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, width: '100%' }}>
+                      {styles.map((s) => (
+                        <Radio.Button
+                          key={s.name}
+                          value={s.name}
+                          style={{ height: 'auto', padding: '8px 12px', whiteSpace: 'normal', textAlign: 'left' }}
+                        >
+                          <div style={{ fontWeight: 500 }}>{s.label}</div>
+                          <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{s.description}</div>
+                        </Radio.Button>
+                      ))}
+                    </div>
+                  </Radio.Group>
+                </Form.Item>
+              </>
+            ) : (
+              <>
+                <Form.Item
+                  label={scenario === 'presentation' ? '汇报主题（必填）' : '演讲主题（选填）'}
+                  name="position"
+                  rules={scenario === 'presentation' ? [{ required: true, message: '请输入汇报主题' }] : []}
+                >
+                  <Input
+                    placeholder={scenario === 'presentation' ? '如：Q2 季度工作汇报、项目进展述职' : '如：产品发布、团队动员、技术分享'}
+                  />
+                </Form.Item>
+
+                {isTimed && (
+                  <Form.Item
+                    label="训练时长"
+                    name="duration_limit"
+                    rules={[{ required: true, message: '请选择时长' }]}
+                    extra={<Text type="secondary">倒计时结束会提醒并收尾；也可提前讲完手动结束</Text>}
+                  >
+                    <Radio.Group>
+                      {DURATION_OPTIONS.map((d) => (
+                        <Radio.Button key={d.value} value={d.value}>{d.label}</Radio.Button>
+                      ))}
+                    </Radio.Group>
+                  </Form.Item>
+                )}
+
+                <Form.Item
+                  label="上传材料（选填）"
+                  extra={materialUploaded ? (
+                    <Text type="success">已上传：{materialFile?.name}（AI{scenarioMeta.role}会基于材料质询/点评）</Text>
+                  ) : (
+                    <Text type="secondary">支持 PDF/DOCX/TXT，如汇报 PPT 大纲、演讲稿</Text>
+                  )}
+                >
+                  <Upload
+                    maxCount={1}
+                    beforeUpload={(file) => {
+                      handleMaterialUpload(file)
+                      return false
+                    }}
+                    onRemove={() => { setMaterialFile(null); setMaterialUploaded(false) }}
+                  >
+                    <Button icon={<UploadOutlined />} loading={busy}>选择文件</Button>
+                  </Upload>
+                </Form.Item>
+              </>
+            )}
+
+            {isInterview && (
+              <Form.Item label="面试模式">
+                <Radio.Group value={voiceMode ? 'voice' : 'manual'} onChange={(e) => setVoiceMode(e.target.value === 'voice')}>
+                  <Radio.Button value="voice">🎤 自动对话（说完自动提交，像真实面试）</Radio.Button>
+                  <Radio.Button value="manual">⏸️ 手动对话（按钮控制提交节奏）</Radio.Button>
+                </Radio.Group>
+                <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
+                  {voiceMode
+                    ? '说话停顿 1 秒后自动提交回答，AI 自动追问并语音播报，全程免点击。'
+                    : '面试官语音播报后，点「开始回答」说话，说完点「完成回答」提交。界面与分析与自动模式完全一致。'}
                 </div>
-              </Radio.Group>
-            </Form.Item>
-
-            <Form.Item label="面试模式">
-              <Radio.Group value={voiceMode ? 'voice' : 'manual'} onChange={(e) => setVoiceMode(e.target.value === 'voice')}>
-                <Radio.Button value="voice">🎤 自动对话（说完自动提交，像真实面试）</Radio.Button>
-                <Radio.Button value="manual">⏸️ 手动对话（按钮控制提交节奏）</Radio.Button>
-              </Radio.Group>
-              <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
-                {voiceMode
-                  ? '说话停顿 1 秒后自动提交回答，AI 自动追问并语音播报，全程免点击。'
-                  : '面试官语音播报后，点「开始回答」说话，说完点「完成回答」提交。界面与分析与自动模式完全一致。'}
-              </div>
-            </Form.Item>
+              </Form.Item>
+            )}
 
             <Space>
-              <Button type="primary" loading={busy} onClick={startFlow}>开始面试</Button>
+              <Button type="primary" loading={busy} onClick={startFlow}>
+                开始{scenarioMeta.name}
+              </Button>
               <Button onClick={() => nav('/settings')}>先去配置 AI API</Button>
             </Space>
 
-            <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px dashed #e5e5e5' }}>
-              <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
-                保存为档案（保存当前配置，下次一键开练）
-              </Text>
-              <Space.Compact style={{ width: 360 }}>
-                <Input
-                  placeholder="档案名，如：产品经理-字节"
-                  value={saveName}
-                  onChange={(e) => setSaveName(e.target.value)}
-                />
-                <Button onClick={saveProfile} loading={savingProfile}>保存档案</Button>
-              </Space.Compact>
-            </div>
+            {isInterview && (
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px dashed #e5e5e5' }}>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+                  保存为档案（保存当前配置，下次一键开练）
+                </Text>
+                <Space.Compact style={{ width: 360 }}>
+                  <Input
+                    placeholder="档案名，如：产品经理-字节"
+                    value={saveName}
+                    onChange={(e) => setSaveName(e.target.value)}
+                  />
+                  <Button onClick={saveProfile} loading={savingProfile}>保存档案</Button>
+                </Space.Compact>
+              </div>
+            )}
           </Form>
           <Alert
             type="info"
             showIcon
             style={{ marginTop: 16 }}
-            message="使用前请在「设置」中配置 LLM（必需）与 TTS（语音面试官）。"
-            description="两种模式均使用阿里云 Paraformer 实时识别（复用 TTS 的阿里云 key 即可），不再依赖浏览器/谷歌；界面、实时分析、语音播报完全一致，仅提交方式不同。"
+            message={`使用前请在「设置」中配置 LLM（必需）与 TTS（AI${scenarioMeta.role}语音）。`}
+            description="实时识别使用阿里云 Paraformer（复用 TTS 的阿里云 key 即可）；实时反馈、语音播报、报告链路三场景完全一致。"
           />
         </Card>
       </div>
@@ -459,13 +589,20 @@ export default function Interview() {
   // ===== 运行阶段 UI（自动/手动模式共用语音链路界面） =====
   if (phase === 'running') {
     const vs = voice.state
+    // 限时场景：正计时 + 倒计时（started_at 为计时基准）
+    const elapsedSec = elapsedSecLocal
+    const remainSec = durationLimit > 0 ? Math.max(0, durationLimit * 60 - elapsedSec) : null
+    const fmtTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+    const nearEnd = remainSec !== null && remainSec > 0 && remainSec <= 60  // 剩 1 分钟橙色提醒
+    const timeOver = remainSec === 0
+
     const statusMeta: Record<string, { color: string; label: string }> = voiceMode
       ? {
           idle: { color: 'default', label: '未开始' },
           connecting: { color: 'orange', label: '连接中' },
-          listening: { color: 'green', label: '🎧 请回答（我在听）' },
-          ai_speaking: { color: 'blue', label: '🔊 面试官提问中' },
-          thinking: { color: 'purple', label: '🤔 面试官思考中' },
+          listening: { color: 'green', label: isInterview ? '🎧 请回答（我在听）' : '🎙️ 请开始你的表达（我在听）' },
+          ai_speaking: { color: 'blue', label: `🔊 AI${scenarioMeta.role}发言中` },
+          thinking: { color: 'purple', label: '🤔 思考中' },
           ended: { color: 'default', label: '已结束' },
           error: { color: 'red', label: '出错' },
         }
@@ -473,7 +610,7 @@ export default function Interview() {
           idle: { color: 'default', label: '未开始' },
           connecting: { color: 'orange', label: '连接中' },
           listening: { color: 'green', label: '🎙️ 录音中（点「完成回答」提交）' },
-          ai_speaking: { color: 'blue', label: '🔊 面试官提问中' },
+          ai_speaking: { color: 'blue', label: `🔊 AI${scenarioMeta.role}发言中` },
           thinking: { color: 'purple', label: '✋ 待你作答（点「开始回答」）' },
           ended: { color: 'default', label: '已结束' },
           error: { color: 'red', label: '出错' },
@@ -523,10 +660,26 @@ export default function Interview() {
           <Space>
             <Tag color={vs.connected ? 'green' : 'orange'}>{vs.connected ? '语音通道已连接' : '连接中'}</Tag>
             <Tag color={meta.color}>{meta.label}</Tag>
+            {isTimed && startedAt && (
+              <Tag
+                color={timeOver ? 'red' : nearEnd ? 'orange' : 'blue'}
+                style={{ fontFamily: 'monospace', fontSize: 14 }}
+              >
+                ⏱ {fmtTime(elapsedSec)}{remainSec !== null ? ` / 剩 ${fmtTime(remainSec)}` : ''}
+              </Tag>
+            )}
           </Space>
           <Space>
+            {isTimed && (
+              <Button
+                type="primary"
+                onClick={() => { autoFinishedRef.current = true; voice.finishStage() }}
+              >
+                讲完了，下一环节
+              </Button>
+            )}
             <Button onClick={() => { voice.stop(); voiceStartRef.current = false; setPhase('config') }}>
-              {voiceMode ? '退出语音模式' : '返回配置'}
+              {isInterview ? (voiceMode ? '退出语音模式' : '返回配置') : '返回配置'}
             </Button>
             <Button danger onClick={() => {
               voice.endInterview()
@@ -535,17 +688,22 @@ export default function Interview() {
                   setTimeout(() => nav(`/report/${sid}`), 800)
                 })
               }
-            }}>结束面试</Button>
+            }}>结束训练</Button>
           </Space>
         </div>
+
+        {(vs.timeUp || timeOver) && isTimed && (
+          <Alert type={timeOver ? 'error' : 'warning'} showIcon style={{ marginBottom: 12 }}
+            message="⏰ 时间到！系统将自动收尾，也可点「讲完了，下一环节」继续。" />
+        )}
 
         {vs.error && (
           <Alert type="error" showIcon style={{ marginBottom: 12 }} message={vs.error} />
         )}
 
-        <Card title="AI 面试官" style={{ marginBottom: 12 }}>
+        <Card title={`AI ${scenarioMeta.role}`} style={{ marginBottom: 12 }}>
           <Paragraph style={{ minHeight: 48, fontSize: 16 }}>
-            {vs.aiQuestion || '等待面试官提问...'}
+            {vs.aiQuestion || (isInterview ? '等待面试官提问...' : `等待AI${scenarioMeta.role}发言...`)}
           </Paragraph>
         </Card>
 
@@ -556,7 +714,9 @@ export default function Interview() {
               {vs.partialText && <span style={{ color: '#999' }}>{vs.partialText}</span>}
               {!vs.finalText && !vs.partialText && (
                 <span style={{ color: '#bbb' }}>
-                  {voiceMode ? '开始说话吧，说完停顿一下，面试官会自动接话…' : '点「开始回答」后说话，说完点「完成回答」提交'}
+                  {isInterview
+                    ? (voiceMode ? '开始说话吧，说完停顿一下，面试官会自动接话…' : '点「开始回答」后说话，说完点「完成回答」提交')
+                    : '开始你的表达吧，全程实时反馈；讲完点右上角「讲完了，下一环节」'}
                 </span>
               )}
             </div>
