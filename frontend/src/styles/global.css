@@ -25,3 +25,43 @@ a {
   color: var(--color-primary);
   text-decoration: none;
 }
+
+/* ===== 运行页：字幕提词器 ===== */
+/* 历史句：淡化 */
+.sub-history {
+  font-size: 14px;
+  line-height: 1.9;
+  color: #bfbfbf;
+}
+
+/* 当前句：大字聚焦 */
+.sub-current {
+  font-size: 20px;
+  line-height: 1.8;
+  color: #1a1a1a;
+  font-weight: 500;
+}
+
+/* ===== 最新反馈强调态（呼吸动画，3 秒后移除 class）===== */
+@keyframes fb-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(250, 173, 20, 0.55); }
+  50% { box-shadow: 0 0 0 6px rgba(250, 173, 20, 0); }
+}
+
+.fb-emphasis {
+  animation: fb-pulse 1s ease-in-out infinite;
+  border-left-width: 3px !important;
+}
+
+/* AI 发言折叠态：单行省略 */
+.ai-summary-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  color: #595959;
+}
+
+.ai-summary-line:hover {
+  color: #1677ff;
+}

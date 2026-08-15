@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  Card, Form, Select, Upload, Button, Alert, Typography, Space, Tag, message, Input, Radio,
+  Card, Form, Select, Upload, Button, Alert, Typography, Space, Tag, message, Input, Radio, Tooltip,
 } from 'antd'
 import { UploadOutlined } from '@ant-design/icons'
 import { apiService } from '@/services/api'
@@ -330,6 +330,34 @@ export default function Interview() {
     const el = subtitleRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [voice.state.finalText, voice.state.partialText])
+
+  // AI 发言折叠：新发言自动展开，用户可点标题收起（只听不看，释放纵向空间）
+  const [aiCollapsed, setAiCollapsed] = useState(false)
+  const prevQuestionRef = useRef('')
+  useEffect(() => {
+    const q = voice.state.aiQuestion
+    if (q && q !== prevQuestionRef.current) {
+      prevQuestionRef.current = q
+      setAiCollapsed(false)  // 新发言自动展开
+    }
+  }, [voice.state.aiQuestion])
+
+  // 最新反馈强调态：feedbacks 变化时取最后一条 id，3 秒后取消强调
+  const [emphasisId, setEmphasisId] = useState<string | null>(null)
+  const prevFbLenRef = useRef(0)
+  useEffect(() => {
+    const list = voice.state.feedbacks
+    if (list.length > prevFbLenRef.current) {
+      const last = list[list.length - 1]
+      if (last) {
+        setEmphasisId(last.id)
+        const t = setTimeout(() => setEmphasisId((cur) => (cur === last.id ? null : cur)), 3000)
+        prevFbLenRef.current = list.length
+        return () => clearTimeout(t)
+      }
+    }
+    prevFbLenRef.current = list.length
+  }, [voice.state.feedbacks])
   useEffect(() => {
     if (phase !== 'running' || !sid || voiceStartRef.current) return
     voiceStartRef.current = true
@@ -629,7 +657,7 @@ export default function Interview() {
         }
     const meta = statusMeta[vs.status] || statusMeta.idle
 
-    // 字幕高亮渲染：把口癖/重复词/模糊词标黄红紫
+    // 字幕高亮渲染：把口癖/重复词/模糊词标黄红紫（仅当前句启用，历史句淡化不打标）
     const renderHighlighted = (text: string) => {
       if (!text) return null
       const words = [...vs.highlightWords.keys()].sort((a, b) => b.length - a.length)
@@ -686,19 +714,11 @@ export default function Interview() {
           minHeight: 0,
         }}
       >
-        {/* 顶部工具栏（固定高度） */}
+        {/* 顶部工具栏（固定高度）；计时器已并入底部驾驶舱 */}
         <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, rowGap: 4 }}>
           <Space wrap>
             <Tag color={vs.connected ? 'green' : 'orange'}>{vs.connected ? '语音通道已连接' : '连接中'}</Tag>
             <Tag color={meta.color}>{meta.label}</Tag>
-            {isTimed && startedAt && (
-              <Tag
-                color={timeOver ? 'red' : nearEnd ? 'orange' : 'blue'}
-                style={{ fontFamily: 'monospace', fontSize: 14 }}
-              >
-                ⏱ {fmtTime(elapsedSec)}{remainSec !== null ? ` / 剩 ${fmtTime(remainSec)}` : ''}
-              </Tag>
-            )}
           </Space>
           <Space>
             {isTimed && (
@@ -732,11 +752,11 @@ export default function Interview() {
           <Alert type="error" showIcon message={vs.error} />
         )}
 
-        {/* 主区：左（AI 发言 + 实时字幕）/ 右（实时反馈），高度弹性、各自内部滚动 */}
+        {/* 主区：左（AI 发言 + 实时字幕）/ 右（实时反馈，加宽至约 45%），高度弹性、各自内部滚动 */}
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'minmax(0, 1fr) 380px',
+            gridTemplateColumns: 'minmax(0, 11fr) minmax(340px, 9fr)',
             gap: 12,
             flex: 1,
             minHeight: 0,
@@ -744,12 +764,36 @@ export default function Interview() {
         >
           {/* 左列：flex 纵向，字幕区吃掉剩余高度 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
-            <Card title={`AI ${scenarioMeta.role}`} size="small" style={{ flexShrink: 0 }}>
-              <Paragraph
-                style={{ fontSize: 15, maxHeight: 96, overflowY: 'auto', marginBottom: 0 }}
-              >
-                {vs.aiQuestion || (isInterview ? '等待面试官提问...' : `等待AI${scenarioMeta.role}发言...`)}
-              </Paragraph>
+            {/* AI 发言：说完可折叠成单行摘要，释放纵向空间给字幕；新发言自动展开 */}
+            <Card
+              title={
+                <span
+                  onClick={() => setAiCollapsed((c) => !c)}
+                  style={{ cursor: 'pointer', userSelect: 'none' }}
+                  title={aiCollapsed ? '点击展开全文' : '点击收起（只听音频，释放空间）'}
+                >
+                  AI {scenarioMeta.role} {aiCollapsed ? '▸' : '▾'}
+                </span>
+              }
+              size="small"
+              style={{ flexShrink: 0 }}
+              styles={{ body: { padding: aiCollapsed ? '6px 12px' : undefined } }}
+            >
+              {aiCollapsed ? (
+                <div
+                  className="ai-summary-line"
+                  onClick={() => setAiCollapsed(false)}
+                  title="点击展开全文"
+                >
+                  {vs.aiQuestion || (isInterview ? '等待面试官提问...' : `等待AI${scenarioMeta.role}发言...`)}
+                </div>
+              ) : (
+                <Paragraph
+                  style={{ fontSize: 15, maxHeight: 96, overflowY: 'auto', marginBottom: 0 }}
+                >
+                  {vs.aiQuestion || (isInterview ? '等待面试官提问...' : `等待AI${scenarioMeta.role}发言...`)}
+                </Paragraph>
+              )}
             </Card>
 
             <Card
@@ -758,26 +802,32 @@ export default function Interview() {
               style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
               styles={{ body: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' } }}
             >
-              {/* 字幕滚动区：自动滚到底部 */}
+              {/* 字幕提词器：历史句淡化小字，当前句大字聚焦+口癖高亮 */}
               <div
                 ref={subtitleRef}
                 style={{
                   flex: 1,
                   minHeight: 0,
                   overflowY: 'auto',
-                  fontSize: 17,
-                  lineHeight: 2,
                   paddingRight: 4,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'flex-end',
                 }}
               >
-                {vs.finalText && renderHighlighted(vs.finalText)}
-                {vs.partialText && <span style={{ color: '#999' }}>{vs.partialText}</span>}
-                {!vs.finalText && !vs.partialText && (
-                  <span style={{ color: '#bbb' }}>
-                    {isInterview
-                      ? (voiceMode ? '开始说话吧，说完停顿一下，面试官会自动接话…' : '点「开始回答」后说话，说完点「完成回答」提交')
-                      : '开始你的表达吧，全程实时反馈；讲完点右上角「讲完了，下一环节」'}
-                  </span>
+                {vs.finalText && <div className="sub-history">{vs.finalText}</div>}
+                {vs.partialText ? (
+                  <div className="sub-current" style={{ marginTop: vs.finalText ? 6 : 0 }}>
+                    {renderHighlighted(vs.partialText)}
+                  </div>
+                ) : (
+                  !vs.finalText && (
+                    <span style={{ color: '#bbb', fontSize: 15 }}>
+                      {isInterview
+                        ? (voiceMode ? '开始说话吧，说完停顿一下，面试官会自动接话…' : '点「开始回答」后说话，说完点「完成回答」提交')
+                        : '开始你的表达吧，全程实时反馈；讲完点右上角「讲完了，下一环节」'}
+                    </span>
+                  )
                 )}
               </div>
               {voiceMode ? (
@@ -819,7 +869,7 @@ export default function Interview() {
             </Card>
           </div>
 
-          {/* 右列：反馈列表，内部滚动 */}
+          {/* 右列：反馈列表（加宽+汇总收纳到 extra），内部滚动 */}
           <Card
             title={
               <span>
@@ -828,31 +878,39 @@ export default function Interview() {
                 {vs.issueCount > 0 || liveCount > 0 ? '）' : ''}
               </span>
             }
+            extra={
+              (topFillers.length > 0 || Object.keys(kindCounts).length > 0) ? (
+                <Tooltip
+                  title={
+                    <div>
+                      {topFillers.length > 0 && (
+                        <div style={{ marginBottom: 6 }}>
+                          <div style={{ color: '#bbb', marginBottom: 2 }}>本问题高频词</div>
+                          {topFillers.map(([w, c]) => (
+                            <Tag key={w} color="orange" style={{ marginBottom: 2 }}>{w} ×{c}</Tag>
+                          ))}
+                        </div>
+                      )}
+                      <Space size={4} wrap>
+                        {Object.entries(kindCounts).map(([k, c]) => {
+                          const fm = feedbackMeta[k]
+                          return fm ? <Tag key={k} style={{ fontSize: 11, color: fm.color, borderColor: fm.color }}>{fm.label} {c}</Tag> : null
+                        })}
+                      </Space>
+                    </div>
+                  }
+                  placement="leftTop"
+                >
+                  <Button size="small" type="text" style={{ fontSize: 12, color: '#8c8c8c' }}>
+                    汇总 {vs.feedbacks.length} ⓘ
+                  </Button>
+                </Tooltip>
+              ) : undefined
+            }
             size="small"
             style={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}
             styles={{ body: { flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 } }}
           >
-            {/* 汇总：口头禅 Top + 分维度统计 */}
-            {(topFillers.length > 0 || vs.feedbacks.length > 0) && (
-              <div style={{ marginBottom: 10, paddingBottom: 8, borderBottom: '1px dashed #eee' }}>
-                {topFillers.length > 0 && (
-                  <div style={{ marginBottom: 6 }}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>本问题高频词</Text>
-                    <div style={{ marginTop: 4 }}>
-                      {topFillers.map(([w, c]) => (
-                        <Tag key={w} color="orange" style={{ marginBottom: 4 }}>{w} ×{c}</Tag>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <Space size={4} wrap>
-                  {Object.entries(kindCounts).map(([k, c]) => {
-                    const fm = feedbackMeta[k]
-                    return fm ? <Tag key={k} style={{ fontSize: 11, color: fm.color, borderColor: fm.color }}>{fm.label} {c}</Tag> : null
-                  })}
-                </Space>
-              </div>
-            )}
             {vs.feedbacks.length === 0 ? (
               <Text type="secondary" style={{ fontSize: 12 }}>
                 暂无问题——口癖、重复、模糊、超长句说出口 1 秒内⚡提示；语速过快、该换气、冷场也会即时提醒
@@ -862,13 +920,16 @@ export default function Interview() {
                 const fm = feedbackMeta[f.kind] || feedbackMeta.filler
                 const clock = new Date(f.ts)
                 const hhmmss = `${String(clock.getHours()).padStart(2, '0')}:${String(clock.getMinutes()).padStart(2, '0')}:${String(clock.getSeconds()).padStart(2, '0')}`
+                const emphasized = f.id === emphasisId
                 return (
                   <div
                     key={f.id}
+                    className={emphasized ? 'fb-emphasis' : undefined}
                     style={{
-                      marginBottom: 8, padding: '6px 8px', borderRadius: 6,
-                      background: fm.bg, fontSize: 12,
-                      borderLeft: f.live ? '2px solid #faad14' : undefined,
+                      marginBottom: 8, padding: emphasized ? '10px 10px' : '6px 8px', borderRadius: 6,
+                      background: fm.bg, fontSize: emphasized ? 14 : 12,
+                      borderLeft: f.live || emphasized ? '2px solid #faad14' : undefined,
+                      transition: 'padding 0.3s ease, font-size 0.3s ease',
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -896,9 +957,17 @@ export default function Interview() {
           </Card>
         </div>
 
-        {/* 底部状态条（固定高度，不随内容增长） */}
+        {/* 底部状态条：⚡实时指标 + 限时计时 = 驾驶舱（固定高度，不随内容增长） */}
         <div style={{ flexShrink: 0 }}>
-          <EmotionIndicator data={emotion} live={vs.liveMetrics} />
+          <EmotionIndicator
+            data={emotion}
+            live={vs.liveMetrics}
+            timer={
+              isTimed && startedAt
+                ? { elapsedSec, remainSec, timeOver, nearEnd, fmt: fmtTime }
+                : undefined
+            }
+          />
         </div>
       </div>
     )

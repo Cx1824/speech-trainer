@@ -80,8 +80,21 @@ function explainFactors(factors: Record<string, number> | undefined, tension: nu
   return `主要贡献：${parts.join(' · ')}（分值越大影响越大）`
 }
 
-/** 底部状态条：⚡实时大数字 + 紧张/自信双指标 + 单行明细 */
-export default function EmotionIndicator({ data, live }: { data: EmotionData | null; live?: LiveMetricsData | null }) {
+/** 限时计时（驾驶舱模块：与实时指标并排，限时场景显示） */
+export interface TimerData {
+  elapsedSec: number
+  remainSec: number | null
+  timeOver: boolean
+  nearEnd: boolean
+  fmt: (s: number) => string
+}
+
+/** 底部状态条：⚡实时大数字 + 计时 + 紧张/自信双指标 + 单行明细 */
+export default function EmotionIndicator({
+  data,
+  live,
+  timer,
+}: { data: EmotionData | null; live?: LiveMetricsData | null; timer?: TimerData }) {
   const tension = data?.tensionScore ?? 0
   const confidence = data?.confidenceScore ?? 0
   const tTone = tone(tension)
@@ -137,6 +150,30 @@ export default function EmotionIndicator({ data, live }: { data: EmotionData | n
           </>
         ) : (
           <span className="eb-badge eb-badge-dim">我的状态</span>
+        )}
+        {/* 限时计时（驾驶舱）：正常蓝 / 剩1分钟橙 / 到点红 */}
+        {timer && (
+          <span className="eb-item" style={{ marginLeft: hasLive ? undefined : 0 }}>
+            <span
+              className="eb-big"
+              style={{
+                color: timer.timeOver ? '#ff4d4f' : timer.nearEnd ? '#fa8c16' : '#1677ff',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {timer.remainSec !== null ? timer.fmt(timer.remainSec) : timer.fmt(timer.elapsedSec)}
+            </span>
+            <span className="eb-unit">
+              {timer.remainSec !== null ? (
+                <>
+                  剩余<br />
+                  <span style={{ color: '#bfbfbf' }}>已用 {timer.fmt(timer.elapsedSec)}</span>
+                </>
+              ) : (
+                <>已用时间</>
+              )}
+            </span>
+          </span>
         )}
         <span className="eb-tags">
           {data?.voiceSignal && <span className="eb-tag eb-tag-green">声学信号</span>}
