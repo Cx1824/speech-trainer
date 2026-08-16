@@ -1,0 +1,282 @@
+[
+ {
+  "id": "Xiaoxiao_base_r-20",
+  "voice": "zh-CN-XiaoxiaoNeural",
+  "voice_gender": "Female",
+  "text_key": "base",
+  "rate_percent": -20,
+  "char_count": 142,
+  "duration_sec": 38.5,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Xiaoxiao_base_r-10",
+  "voice": "zh-CN-XiaoxiaoNeural",
+  "voice_gender": "Female",
+  "text_key": "base",
+  "rate_percent": -10,
+  "char_count": 142,
+  "duration_sec": 34.22,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Xiaoxiao_base_r+0",
+  "voice": "zh-CN-XiaoxiaoNeural",
+  "voice_gender": "Female",
+  "text_key": "base",
+  "rate_percent": 0,
+  "char_count": 142,
+  "duration_sec": 30.79,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Xiaoxiao_base_r+10",
+  "voice": "zh-CN-XiaoxiaoNeural",
+  "voice_gender": "Female",
+  "text_key": "base",
+  "rate_percent": 10,
+  "char_count": 142,
+  "duration_sec": 27.98,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Xiaoxiao_base_r+20",
+  "voice": "zh-CN-XiaoxiaoNeural",
+  "voice_gender": "Female",
+  "text_key": "base",
+  "rate_percent": 20,
+  "char_count": 142,
+  "duration_sec": 25.66,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Xiaoxiao_long_r+0",
+  "voice": "zh-CN-XiaoxiaoNeural",
+  "voice_gender": "Female",
+  "text_key": "long",
+  "rate_percent": 0,
+  "char_count": 172,
+  "duration_sec": 36.86,
+  "text": "我来详细说明一下这个方案的整体设计思路和背后的权衡过程。首先从用户侧看我们需要同时满足三个相互制约的目标分别是响应速度成本控制与数据一致性。在最初的版本里，我们尝试了同步写双库的方案；但是压测发现，在峰值每秒一万两千次请求的场景下，主库的写入延迟会从平均五毫秒恶化到四十毫秒以上。所以最终的方案是异步复制加对账兜底，把不一致窗口压缩到五秒以内。"
+ },
+ {
+  "id": "Xiaoxiao_filler_r+0",
+  "voice": "zh-CN-XiaoxiaoNeural",
+  "voice_gender": "Female",
+  "text_key": "filler",
+  "rate_percent": 0,
+  "char_count": 100,
+  "duration_sec": 21.77,
+  "text": "嗯，这个，我觉得吧，可能就是，大概是这样的。然后呢，嗯，就是说，我们当时可能应该是，嗯，先做了调研。然后就是，那个，可能大概有，嗯，三十个人左右吧。我觉得应该就是，嗯，差不多这样，就是可能还差点意思。"
+ },
+ {
+  "id": "Xiaoyi_base_r-20",
+  "voice": "zh-CN-XiaoyiNeural",
+  "voice_gender": "Female",
+  "text_key": "base",
+  "rate_percent": -20,
+  "char_count": 142,
+  "duration_sec": 36.84,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Xiaoyi_base_r-10",
+  "voice": "zh-CN-XiaoyiNeural",
+  "voice_gender": "Female",
+  "text_key": "base",
+  "rate_percent": -10,
+  "char_count": 142,
+  "duration_sec": 32.76,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Xiaoyi_base_r+0",
+  "voice": "zh-CN-XiaoyiNeural",
+  "voice_gender": "Female",
+  "text_key": "base",
+  "rate_percent": 0,
+  "char_count": 142,
+  "duration_sec": 29.5,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Xiaoyi_base_r+10",
+  "voice": "zh-CN-XiaoyiNeural",
+  "voice_gender": "Female",
+  "text_key": "base",
+  "rate_percent": 10,
+  "char_count": 142,
+  "duration_sec": 26.81,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Xiaoyi_base_r+20",
+  "voice": "zh-CN-XiaoyiNeural",
+  "voice_gender": "Female",
+  "text_key": "base",
+  "rate_percent": 20,
+  "char_count": 142,
+  "duration_sec": 24.58,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Xiaoyi_long_r+0",
+  "voice": "zh-CN-XiaoyiNeural",
+  "voice_gender": "Female",
+  "text_key": "long",
+  "rate_percent": 0,
+  "char_count": 172,
+  "duration_sec": 35.88,
+  "text": "我来详细说明一下这个方案的整体设计思路和背后的权衡过程。首先从用户侧看我们需要同时满足三个相互制约的目标分别是响应速度成本控制与数据一致性。在最初的版本里，我们尝试了同步写双库的方案；但是压测发现，在峰值每秒一万两千次请求的场景下，主库的写入延迟会从平均五毫秒恶化到四十毫秒以上。所以最终的方案是异步复制加对账兜底，把不一致窗口压缩到五秒以内。"
+ },
+ {
+  "id": "Xiaoyi_filler_r+0",
+  "voice": "zh-CN-XiaoyiNeural",
+  "voice_gender": "Female",
+  "text_key": "filler",
+  "rate_percent": 0,
+  "char_count": 100,
+  "duration_sec": 21.58,
+  "text": "嗯，这个，我觉得吧，可能就是，大概是这样的。然后呢，嗯，就是说，我们当时可能应该是，嗯，先做了调研。然后就是，那个，可能大概有，嗯，三十个人左右吧。我觉得应该就是，嗯，差不多这样，就是可能还差点意思。"
+ },
+ {
+  "id": "Yunxi_base_r-10",
+  "voice": "zh-CN-YunxiNeural",
+  "voice_gender": "Male",
+  "text_key": "base",
+  "rate_percent": -10,
+  "char_count": 142,
+  "duration_sec": 32.64,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Yunxi_base_r+0",
+  "voice": "zh-CN-YunxiNeural",
+  "voice_gender": "Male",
+  "text_key": "base",
+  "rate_percent": 0,
+  "char_count": 142,
+  "duration_sec": 29.38,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Yunxi_base_r+20",
+  "voice": "zh-CN-YunxiNeural",
+  "voice_gender": "Male",
+  "text_key": "base",
+  "rate_percent": 20,
+  "char_count": 142,
+  "duration_sec": 24.48,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Yunxi_filler_r+0",
+  "voice": "zh-CN-YunxiNeural",
+  "voice_gender": "Male",
+  "text_key": "filler",
+  "rate_percent": 0,
+  "char_count": 100,
+  "duration_sec": 21.82,
+  "text": "嗯，这个，我觉得吧，可能就是，大概是这样的。然后呢，嗯，就是说，我们当时可能应该是，嗯，先做了调研。然后就是，那个，可能大概有，嗯，三十个人左右吧。我觉得应该就是，嗯，差不多这样，就是可能还差点意思。"
+ },
+ {
+  "id": "Yunyang_base_r-20",
+  "voice": "zh-CN-YunyangNeural",
+  "voice_gender": "Male",
+  "text_key": "base",
+  "rate_percent": -20,
+  "char_count": 142,
+  "duration_sec": 33.86,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Yunyang_base_r-10",
+  "voice": "zh-CN-YunyangNeural",
+  "voice_gender": "Male",
+  "text_key": "base",
+  "rate_percent": -10,
+  "char_count": 142,
+  "duration_sec": 30.12,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Yunyang_base_r+0",
+  "voice": "zh-CN-YunyangNeural",
+  "voice_gender": "Male",
+  "text_key": "base",
+  "rate_percent": 0,
+  "char_count": 142,
+  "duration_sec": 27.12,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Yunyang_base_r+10",
+  "voice": "zh-CN-YunyangNeural",
+  "voice_gender": "Male",
+  "text_key": "base",
+  "rate_percent": 10,
+  "char_count": 142,
+  "duration_sec": 24.65,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Yunyang_base_r+20",
+  "voice": "zh-CN-YunyangNeural",
+  "voice_gender": "Male",
+  "text_key": "base",
+  "rate_percent": 20,
+  "char_count": 142,
+  "duration_sec": 22.61,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Yunyang_long_r+0",
+  "voice": "zh-CN-YunyangNeural",
+  "voice_gender": "Male",
+  "text_key": "long",
+  "rate_percent": 0,
+  "char_count": 172,
+  "duration_sec": 34.99,
+  "text": "我来详细说明一下这个方案的整体设计思路和背后的权衡过程。首先从用户侧看我们需要同时满足三个相互制约的目标分别是响应速度成本控制与数据一致性。在最初的版本里，我们尝试了同步写双库的方案；但是压测发现，在峰值每秒一万两千次请求的场景下，主库的写入延迟会从平均五毫秒恶化到四十毫秒以上。所以最终的方案是异步复制加对账兜底，把不一致窗口压缩到五秒以内。"
+ },
+ {
+  "id": "Yunyang_filler_r+0",
+  "voice": "zh-CN-YunyangNeural",
+  "voice_gender": "Male",
+  "text_key": "filler",
+  "rate_percent": 0,
+  "char_count": 100,
+  "duration_sec": 19.3,
+  "text": "嗯，这个，我觉得吧，可能就是，大概是这样的。然后呢，嗯，就是说，我们当时可能应该是，嗯，先做了调研。然后就是，那个，可能大概有，嗯，三十个人左右吧。我觉得应该就是，嗯，差不多这样，就是可能还差点意思。"
+ },
+ {
+  "id": "Yunxi_base_r-20",
+  "voice": "zh-CN-YunxiNeural",
+  "voice_gender": "Male",
+  "text_key": "base",
+  "rate_percent": -20,
+  "char_count": 142,
+  "duration_sec": 36.72,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Yunxi_base_r+10",
+  "voice": "zh-CN-YunxiNeural",
+  "voice_gender": "Male",
+  "text_key": "base",
+  "rate_percent": 10,
+  "char_count": 142,
+  "duration_sec": 26.71,
+  "text": "大家好，今天我想分享三点内容。第一，项目背景：我们在三月份启动了这个计划，目标是在两个月内完成上线。第二，嗯，核心进展：目前完成了大约百分之七十的里程碑，嗯，就是，重点功能已经全部通过验收。第三，下一步：我建议这个月底前完成灰度发布，大概需要三天的观察期。以上就是我的汇报，谢谢大家。"
+ },
+ {
+  "id": "Yunxi_long_r+0",
+  "voice": "zh-CN-YunxiNeural",
+  "voice_gender": "Male",
+  "text_key": "long",
+  "rate_percent": 0,
+  "char_count": 172,
+  "duration_sec": 35.18,
+  "text": "我来详细说明一下这个方案的整体设计思路和背后的权衡过程。首先从用户侧看我们需要同时满足三个相互制约的目标分别是响应速度成本控制与数据一致性。在最初的版本里，我们尝试了同步写双库的方案；但是压测发现，在峰值每秒一万两千次请求的场景下，主库的写入延迟会从平均五毫秒恶化到四十毫秒以上。所以最终的方案是异步复制加对账兜底，把不一致窗口压缩到五秒以内。"
+ }
+]

@@ -368,37 +368,42 @@ def _detrended_jitter(f0: "np.ndarray", times: "np.ndarray") -> float:
 
 
 def _best_f0(x, sr: int, lag_min: int, lag_max: int) -> float:
-    """单帧基频：归一化相似度法 + 八度校验。
+    """单帧基频：归一化互相关（NCF）+ 八度校验。
 
-    sim(lag) = 1 - 2*sum(|x[n]-x[n+lag]|) / sum(x[n]^2 + x[n+lag]^2)
-    同相（lag=周期）→ sim≈+1；反相（lag=半周期）→ sim≈-1。
+    ncf(lag) = Σ(x[n]·x[n+lag]) / √(Σx[n]²·Σx[n+lag]²)
+    取值天然有界 [-1,1] 且尺度不变（分子分母同为二次量）。
+    旧公式 1-2Σ|a-b|/Σ(a²+b²) 分子线性/分母二次，小幅度帧比值越界
+    （实测 sim 深至 -2.2），低音量男声整条音频 f0 全灭；NCF 修复
+    （evals 合成真值集 Yunyang 0Hz→131Hz，Yunxi 恢复 200Hz）。
 
-    八度校验：argmax 可能落在双周期（2T）处（基频微变时该处 sim 反而更高）。
-    找到最优 lag 后反复减半：若半 lag 处 sim 仍达最优的 90%，说明真实周期
+    同相（lag=周期）→ ncf≈+1；反相（lag=半周期）→ ncf≈-1。
+
+    八度校验：argmax 可能落在双周期（2T）处（基频微变时该处 ncf 反而更高）。
+    找到最优 lag 后反复减半：若半 lag 处 ncf 仍达最优的 90%，说明真实周期
     是一半 → 改用半 lag。彻底消除 f0 减半的错误。
-    返回 0 表示非浊音（sim < 0.5）。
+    返回 0 表示非浊音（ncf < 0.5）。
     """
     import numpy as np
 
-    def sim(lag: int) -> float:
+    def ncf(lag: int) -> float:
         a = x[:-lag]
         b = x[lag:]
-        denom = np.sum(a * a + b * b)
-        return 1.0 - 2.0 * np.sum(np.abs(a - b)) / denom if denom > 0 else -1.0
+        denom = np.sqrt(np.sum(a * a) * np.sum(b * b))
+        return float(np.sum(a * b) / denom) if denom > 0 else 0.0
 
     lags = range(lag_min, lag_max + 1)
     best_lag, best_val = -1, -1.0
     for lag in lags:
-        v = sim(lag)
+        v = ncf(lag)
         if v > best_val:
             best_val, best_lag = v, lag
     if best_lag <= 0 or best_val <= 0.5:
         return 0.0
 
-    # 八度校验：最优 lag 减半后 sim 仍≥90% → 真实周期是一半
+    # 八度校验：最优 lag 减半后 ncf 仍≥90% → 真实周期是一半
     while best_lag // 2 >= lag_min:
         half = best_lag // 2
-        if sim(half) >= best_val * 0.90:
+        if ncf(half) >= best_val * 0.90:
             best_lag = half
         else:
             break
@@ -406,10 +411,9 @@ def _best_f0(x, sr: int, lag_min: int, lag_max: int) -> float:
 
 
 def _estimate_f0_per_frame(frames, sr: int) -> tuple["list[float]", "list[float]"]:
-    """每帧基频估计（归一化相似度，抗倍频）。
+    """每帧基频估计（NCF 归一化互相关，尺度不变、抗倍频）。
 
-    sim(lag) = 1 - 2*sum(|x[n]-x[n+lag]|) / sum(x[n]^2 + x[n+lag]^2)
-    同相（lag=周期）→ sim≈+1；反相（lag=半周期）→ sim≈-1。
+    ncf(lag) = Σ(x[n]·x[n+lag]) / √(Σx[n]²·Σx[n+lag]²)（有界 [-1,1]）
     取相似度最大的 lag：半周期处被天然抑制，不会倍频。
 
     返回 (f0 列表, 对应帧中心时间秒列表)。
