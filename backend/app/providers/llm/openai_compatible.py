@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import AsyncIterator
 
 import httpx
@@ -12,6 +13,23 @@ import httpx
 from app.core.exceptions import ProviderError
 from app.providers.base import BaseLLMProvider, registry
 from app.schemas import ProviderConfigIn
+
+LLM_REQUEST_TIMEOUT = httpx.Timeout(
+    connect=10.0,
+    read=60.0,
+    write=30.0,
+    pool=10.0,
+)
+LLM_STREAM_TIMEOUT = httpx.Timeout(
+    connect=10.0,
+    read=90.0,
+    write=30.0,
+    pool=10.0,
+)
+MAX_LLM_OUTPUT_TOKENS = 32_768
+MAX_LLM_READ_TIMEOUT_SECONDS = 300.0
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAICompatibleLLM(BaseLLMProvider):
@@ -29,7 +47,7 @@ class OpenAICompatibleLLM(BaseLLMProvider):
 
     @property
     def _model(self) -> str:
-        return self.config.model or "deepseek-chat"
+        return self.config.model or "deepseek-v4-pro"
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -65,7 +83,30 @@ class OpenAICompatibleLLM(BaseLLMProvider):
         *,
         temperature: float = 0.7,
         stream: bool = False,
+        max_tokens: int | None = None,
+        read_timeout: float | None = None,
+        thinking: bool | None = None,
     ) -> str | AsyncIterator[str]:
+        if max_tokens is not None and (
+            isinstance(max_tokens, bool)
+            or not isinstance(max_tokens, int)
+            or not 1 <= max_tokens <= MAX_LLM_OUTPUT_TOKENS
+        ):
+            raise ValueError(
+                f"max_tokens 必须是 1 到 {MAX_LLM_OUTPUT_TOKENS} 之间的整数"
+            )
+        if read_timeout is not None and (
+            isinstance(read_timeout, bool)
+            or not isinstance(read_timeout, (int, float))
+            or not 1 <= read_timeout <= MAX_LLM_READ_TIMEOUT_SECONDS
+        ):
+            raise ValueError(
+                "read_timeout 必须是 1 到 "
+                f"{int(MAX_LLM_READ_TIMEOUT_SECONDS)} 秒之间的数字"
+            )
+        if thinking is not None and not isinstance(thinking, bool):
+            raise ValueError("thinking 必须是布尔值")
+
         url = f"{self._base_url}/chat/completions"
         payload = {
             "model": self._model,
@@ -74,12 +115,60 @@ class OpenAICompatibleLLM(BaseLLMProvider):
             "stream": stream,
         }
         if not stream:
+            if max_tokens is not None:
+                payload["max_tokens"] = max_tokens
+            if thinking is not None:
+                payload["thinking"] = {
+                    "type": "enabled" if thinking else "disabled"
+                }
+            timeout = LLM_REQUEST_TIMEOUT
+            if read_timeout is not None:
+                timeout = httpx.Timeout(
+                    connect=LLM_REQUEST_TIMEOUT.connect,
+                    read=float(read_timeout),
+                    write=LLM_REQUEST_TIMEOUT.write,
+                    pool=LLM_REQUEST_TIMEOUT.pool,
+                )
             try:
-                async with httpx.AsyncClient(timeout=60) as client:
+                async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.post(url, json=payload, headers=self._headers())
                 resp.raise_for_status()
                 data = resp.json()
-                return data["choices"][0]["message"]["content"]
+                try:
+                    choice = data["choices"][0]
+                    message = choice["message"]
+                except (KeyError, IndexError, TypeError) as e:
+                    raise ProviderError("LLM 返回格式异常，请稍后重试") from e
+
+                content = message.get("content")
+                if isinstance(content, str) and content.strip():
+                    return content
+
+                finish_reason = choice.get("finish_reason")
+                reasoning_content = message.get("reasoning_content")
+                reasoning_length = (
+                    len(reasoning_content)
+                    if isinstance(reasoning_content, str)
+                    else 0
+                )
+                logger.warning(
+                    "LLM 未返回最终正文：finish_reason=%s "
+                    "content_length=%d reasoning_length=%d",
+                    finish_reason,
+                    len(content) if isinstance(content, str) else 0,
+                    reasoning_length,
+                )
+                if finish_reason == "length":
+                    raise ProviderError(
+                        "LLM 输出达到长度上限，未生成完整结果，请稍后重试"
+                    )
+                if reasoning_length:
+                    raise ProviderError(
+                        "LLM 仅完成了内部分析，尚未生成最终结果，请稍后重试"
+                    )
+                raise ProviderError("LLM 未返回有效内容，请稍后重试")
+            except httpx.TimeoutException as e:
+                raise ProviderError("LLM 响应超时，请检查网络或服务地址后重试") from e
             except httpx.HTTPError as e:
                 raise ProviderError(f"LLM 调用失败: {e}") from e
 
@@ -87,7 +176,7 @@ class OpenAICompatibleLLM(BaseLLMProvider):
 
     async def _stream_chat(self, url: str, payload: dict) -> AsyncIterator[str]:
         try:
-            async with httpx.AsyncClient(timeout=None) as client:
+            async with httpx.AsyncClient(timeout=LLM_STREAM_TIMEOUT) as client:
                 async with client.stream(
                     "POST", url, json=payload, headers=self._headers()
                 ) as resp:
@@ -106,6 +195,8 @@ class OpenAICompatibleLLM(BaseLLMProvider):
                                 yield delta
                         except (KeyError, ValueError):
                             continue
+        except httpx.TimeoutException as e:
+            raise ProviderError("LLM 流式响应超时，请检查网络或服务地址后重试") from e
         except httpx.HTTPError as e:
             raise ProviderError(f"LLM 流式调用失败: {e}") from e
 

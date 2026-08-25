@@ -9,20 +9,36 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
+import logging
+import time
 import uuid
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import InterviewError, NotFoundError
-from app.models.interview import InterviewDialogueRow, InterviewSessionRow
-from app.modules.interview.prompts import build_messages
+from app.core.exceptions import InterviewError, NotFoundError, ProviderError
+from app.models.interview import InterviewDialogueRow, InterviewReportRow, InterviewSessionRow
+from app.modules.interview import planner
+from app.modules.interview.prompts import build_messages, build_planned_messages
 from app.modules.interview.stages import STAGE_QUESTION_LIMIT, Stage, next_stage
 from app.providers import get_llm
 from app.schemas import InterviewConfigIn, InterviewSessionOut, ResumeStructured
-from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+QUESTION_MAX_TOKENS = 320
+QUESTION_READ_TIMEOUT_SECONDS = 15.0
+
+
+def _fallback_interview_question(item: dict[str, Any], is_followup: bool) -> str:
+    """LLM 暂时不可用时维持训练连续性，不猜测用户经历。"""
+    label = str(item.get("label") or "当前方向").strip()
+    if is_followup:
+        return f"关于“{label}”，请再补充一个刚才没有提到的具体事实或例子。"
+    return f"接下来进入“{label}”。请围绕这个方向具体回答，并说明你的判断依据。"
 
 
 def _pack(row: InterviewSessionRow):
@@ -43,6 +59,9 @@ async def create_session(
         position=config.position or "未指定",
         level=config.level,
         style=config.style,
+        interview_mode=planner.normalize_mode(config.interview_mode),
+        interview_intensity=planner.normalize_intensity(config.interview_intensity),
+        source_session_id=config.source_session_id or "",
         company=config.company,
         jd_url=config.jd_url,
         jd_content=config.jd_content,
@@ -112,6 +131,9 @@ async def update_session(
     jd_url: str | None = None,
     jd_content: str | None = None,
     duration_limit: int | None = None,
+    interview_mode: str | None = None,
+    interview_intensity: str | None = None,
+    source_session_id: str | None = None,
 ) -> InterviewSessionOut:
     """更新会话配置字段（部分更新）。"""
     row = await _load_row(db, sid)
@@ -129,6 +151,12 @@ async def update_session(
         row.jd_content = jd_content
     if duration_limit is not None:
         row.duration_limit = duration_limit
+    if interview_mode is not None:
+        row.interview_mode = planner.normalize_mode(interview_mode)
+    if interview_intensity is not None:
+        row.interview_intensity = planner.normalize_intensity(interview_intensity)
+    if source_session_id is not None:
+        row.source_session_id = source_session_id
     await db.commit()
     return _to_out(row)
 
@@ -148,10 +176,45 @@ async def start_interview(db: AsyncSession, sid: str) -> InterviewSessionOut:
             row.position = "未指定"  # 仍保留，LLM 会基于 JD 出题
 
     row.status = "in_progress"
-    row.current_stage = Stage.OPENING.value
+    if row.scenario == "interview" and not planner.load_plan(row.interview_plan_json):
+        weakness_focus = await _load_weakness_focus(db, row)
+        plan = planner.build_plan(
+            row.interview_mode or "full",
+            row.interview_intensity or "standard",
+            weakness_focus=weakness_focus,
+        )
+        row.interview_plan_json = planner.dump_plan(plan)
+        first_item = planner.current_item(plan)
+        row.current_stage = first_item["stage"] if first_item else "report"
+    elif row.scenario != "interview":
+        row.current_stage = Stage.OPENING.value
     if not row.started_at:
         row.started_at = datetime.now()
     await db.commit()
+    return _to_out(row)
+
+
+async def complete_interview(db: AsyncSession, sid: str) -> InterviewSessionOut:
+    """幂等完成训练会话。
+
+    语音链路必须先保存尚未提交的回答，再调用本函数。HTTP 结束接口也复用
+    这里，避免 WebSocket 与 REST 各自维护一套容易漂移的完成逻辑。
+    """
+    row = await _load_row(db, sid)
+    if row.scenario == "interview":
+        plan = planner.load_plan(row.interview_plan_json)
+        if plan:
+            dialogues = await _load_dialogues(db, sid)
+            if dialogues and dialogues[-1].role == "user":
+                current = planner.current_item(plan)
+                covered = plan["state"]["covered_item_ids"]
+                if current and current["id"] not in covered:
+                    covered.append(current["id"])
+                row.interview_plan_json = planner.dump_plan(plan)
+    row.status = "completed"
+    row.current_stage = "report"
+    await db.commit()
+    await db.refresh(row)
     return _to_out(row)
 
 
@@ -203,18 +266,46 @@ async def generate_next(
 
     pack = _pack(row)
     if pack.key == "interview":
-        stage = Stage(row.current_stage)
-        messages = build_messages(
-            stage,
-            position=row.position,
-            level=row.level,
-            resume=resume,
-            dialogues=history,
-            style=row.style,
-            company=row.company,
-            jd_content=row.jd_content,
-        )
-        stage_key = stage.value
+        plan = planner.load_plan(row.interview_plan_json)
+        if plan:
+            item = planner.current_item(plan)
+            if item is None:
+                raise InterviewError("面试计划已完成")
+            is_followup = planner.is_followup_turn(plan, item)
+            question_candidate = (
+                None
+                if is_followup
+                else await _select_question_candidate(db, row, plan, item)
+            )
+            plan_progress = planner.progress(plan)
+            messages = build_planned_messages(
+                position=row.position,
+                level=row.level,
+                resume=resume,
+                dialogues=history,
+                style=row.style,
+                company=row.company,
+                jd_content=row.jd_content,
+                item=item,
+                is_followup=is_followup,
+                covered_labels=plan_progress["covered_labels"],
+                remaining_labels=plan_progress["remaining_labels"],
+                question_candidate=question_candidate,
+            )
+            stage_key = item["stage"]
+        else:
+            stage = Stage(row.current_stage)
+            messages = build_messages(
+                stage,
+                position=row.position,
+                level=row.level,
+                resume=resume,
+                dialogues=history,
+                style=row.style,
+                company=row.company,
+                jd_content=row.jd_content,
+            )
+            stage_key = stage.value
     else:
         from app.modules.scenarios.base import ScenarioContext
         stage_def = _get_stage_def(pack, row.current_stage)
@@ -235,12 +326,40 @@ async def generate_next(
         from app.modules.config import load_provider_config
         cfg = await load_provider_config(db, "llm")
         provider = get_llm(cfg)
-        text = await provider.chat(messages, temperature=0.7)
+        options: dict[str, Any] = {
+            "temperature": 0.7,
+            "max_tokens": QUESTION_MAX_TOKENS,
+            "read_timeout": QUESTION_READ_TIMEOUT_SECONDS,
+        }
+        if cfg.provider == "deepseek":
+            options["thinking"] = False
+        started = time.monotonic()
+        try:
+            text = await provider.chat(messages, **options)
+            logger.info("训练问题生成完成：%.2f 秒", time.monotonic() - started)
+        except ProviderError as exc:
+            if pack.key != "interview" or not plan or item is None:
+                raise
+            logger.warning(
+                "训练问题生成失败，使用本地兜底问题：error_type=%s elapsed=%.2f",
+                type(exc).__name__,
+                time.monotonic() - started,
+            )
+            text = _fallback_interview_question(item, is_followup)
     else:
         text = await llm_api(messages)
 
     if not isinstance(text, str):
         raise InterviewError("LLM 返回非字符串")
+
+    if pack.key == "interview" and plan:
+        planner.record_question(
+            plan,
+            item,
+            question_bank_id=str((question_candidate or {}).get("id") or ""),
+        )
+        row.current_stage = stage_key
+        row.interview_plan_json = planner.dump_plan(plan)
 
     # 持久化 AI 消息
     seq = len(dialogues) + 1
@@ -262,6 +381,18 @@ async def advance_stage(db: AsyncSession, sid: str) -> InterviewSessionOut:
     """推进到下一阶段（按场景包的 stages 顺序）。"""
     row = await _load_row(db, sid)
     pack = _pack(row)
+    if pack.key == "interview":
+        plan = planner.load_plan(row.interview_plan_json)
+        if plan:
+            next_item = planner.advance(plan)
+            row.interview_plan_json = planner.dump_plan(plan)
+            if next_item is None:
+                row.current_stage = "report"
+                row.status = "completed"
+            else:
+                row.current_stage = next_item["stage"]
+            await db.commit()
+            return _to_out(row)
     keys = [s.key for s in pack.stages]
     if row.current_stage in keys:
         idx = keys.index(row.current_stage)
@@ -284,6 +415,11 @@ async def should_advance(
     cur_key = row.current_stage
     pack = _pack(row)
     if pack.key == "interview":
+        plan = planner.load_plan(row.interview_plan_json)
+        if plan:
+            dialogues = await _load_dialogues(db, sid)
+            latest_answer = dialogues[-1].text if dialogues and dialogues[-1].role == "user" else ""
+            return planner.should_advance(plan, latest_answer)
         cur = Stage(cur_key)
         limit = STAGE_QUESTION_LIMIT.get(cur, 1)
     else:
@@ -350,6 +486,33 @@ async def list_dialogues(db: AsyncSession, sid: str) -> list[dict]:
     ]
 
 
+async def get_interview_progress(db: AsyncSession, sid: str) -> dict[str, Any] | None:
+    row = await _load_row(db, sid)
+    if row.scenario != "interview":
+        return None
+    plan = planner.load_plan(row.interview_plan_json)
+    return planner.progress(plan) if plan else None
+
+
+async def skip_interview_item(db: AsyncSession, sid: str) -> InterviewSessionOut:
+    """跳过当前能力方向且不把它标记为已覆盖。"""
+    row = await _load_row(db, sid)
+    if row.scenario != "interview":
+        raise InterviewError("当前场景不支持换题")
+    plan = planner.load_plan(row.interview_plan_json)
+    if not plan:
+        raise InterviewError("当前面试没有可用的覆盖计划")
+    next_item = planner.advance(plan, mark_covered=False)
+    row.interview_plan_json = planner.dump_plan(plan)
+    if next_item is None:
+        row.current_stage = "report"
+        row.status = "completed"
+    else:
+        row.current_stage = next_item["stage"]
+    await db.commit()
+    return _to_out(row)
+
+
 # ---- 内部 ----
 
 def _get_stage_def(pack, stage_key: str):
@@ -358,6 +521,70 @@ def _get_stage_def(pack, stage_key: str):
         if s.key == stage_key:
             return s
     raise InterviewError(f"场景 {pack.key} 不存在阶段：{stage_key}")
+
+
+async def _select_question_candidate(
+    db: AsyncSession,
+    row: InterviewSessionRow,
+    plan: dict[str, Any],
+    item: dict[str, Any],
+) -> dict[str, Any] | None:
+    """从用户岗位题库选择尚未使用且意图匹配的一题。"""
+    from app.modules.question_bank import get_questions
+
+    questions = await get_questions(db, row.position)
+    used = set(plan["state"].get("used_question_bank_ids") or [])
+    available = [question for question in questions if str(question.get("id") or "") not in used]
+    if not available:
+        return None
+    intent = item.get("intent", "")
+    label = item.get("label", "")
+    matched = [
+        question for question in available
+        if question.get("intent") in {intent, label, item.get("stage")}
+    ]
+    return matched[0] if matched else None
+
+
+async def _load_weakness_focus(
+    db: AsyncSession,
+    row: InterviewSessionRow,
+) -> list[dict[str, str]] | None:
+    if row.interview_mode != "weakness":
+        return None
+    query = select(InterviewReportRow)
+    if row.source_session_id:
+        query = query.where(InterviewReportRow.session_id == row.source_session_id)
+    else:
+        query = (
+            query.join(InterviewSessionRow, InterviewReportRow.session_id == InterviewSessionRow.id)
+            .where(InterviewSessionRow.scenario == "interview")
+            .where(InterviewSessionRow.id != row.id)
+        )
+    result = await db.execute(query.order_by(InterviewReportRow.created_at.desc()).limit(1))
+    report_row = result.scalar_one_or_none()
+    if report_row is None:
+        return None
+    try:
+        report = json.loads(report_row.report_json)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    goals = {
+        "response_structure": ("回答结构", "围绕薄弱回答练习先直接作答，再用背景、行动和结果形成完整结构。"),
+        "evidence_results": ("案例证据", "围绕薄弱回答补充本人行动、范围、结果和可核查依据。"),
+        "job_relevance": ("岗位匹配", "围绕薄弱回答明确说明经历如何迁移到目标岗位。"),
+        "followup_response": ("追问回应", "围绕薄弱回答练习补充新证据、澄清边界并保持前后一致。"),
+        "continuity": ("表达连贯", "用短句和明确连接关系重答一个岗位问题，减少口癖和局部重复。"),
+        "pacing": ("语速与停顿", "在完整回答中练习稳定语速和有意义的结构停顿。"),
+    }
+    axes = [axis for axis in report.get("axes", []) if isinstance(axis, dict) and axis.get("score") is not None]
+    axes.sort(key=lambda axis: float(axis.get("score") or 0))
+    focus = []
+    for axis in axes:
+        if axis.get("key") in goals:
+            label, goal = goals[axis["key"]]
+            focus.append({"label": label, "goal": goal})
+    return focus[:4] or None
 
 
 async def _load_row(db: AsyncSession, sid: str) -> InterviewSessionRow:
@@ -384,12 +611,17 @@ def _to_out(row: InterviewSessionRow) -> InterviewSessionOut:
             resume_parsed = ResumeStructured(**json.loads(row.resume_parsed_json))
         except Exception:
             resume_parsed = None
+    plan = planner.load_plan(row.interview_plan_json) if row.scenario == "interview" else None
     return InterviewSessionOut(
         id=row.id,
         scenario=row.scenario or "interview",
         position=row.position,
         level=row.level,
         style=row.style,
+        interview_mode=row.interview_mode or "full",
+        interview_intensity=row.interview_intensity or "standard",
+        interview_progress=planner.progress(plan) if plan else None,
+        source_session_id=row.source_session_id or "",
         company=row.company,
         jd_url=row.jd_url,
         jd_content=row.jd_content,

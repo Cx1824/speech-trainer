@@ -4,6 +4,10 @@ export interface InterviewSessionOut {
   position: string
   level: string
   style: string
+  interview_mode: string
+  interview_intensity: string
+  interview_progress: InterviewProgress | null
+  source_session_id: string
   company: string
   jd_url: string
   jd_content: string
@@ -15,6 +19,39 @@ export interface InterviewSessionOut {
   has_material: boolean
   duration_limit: number
   started_at: string | null
+}
+
+export interface InterviewProgress {
+  mode: string
+  mode_label: string
+  intensity: string
+  intensity_label: string
+  estimated_minutes: { min: number; max: number }
+  current_label: string
+  current_goal?: string
+  covered: number
+  total: number
+  covered_labels: string[]
+  remaining_labels: string[]
+  skipped_labels: string[]
+  followups_used: number
+  followup_budget: number
+}
+
+export interface InterviewModeOut {
+  key: string
+  name: string
+  description: string
+  recommended: boolean
+  estimates: Record<string, { min: number; max: number }>
+  question_counts: Record<string, number>
+}
+
+export interface InterviewIntensityOut {
+  key: string
+  name: string
+  description: string
+  followup_budget: number
 }
 
 /** 训练场景（首页卡片）。 */
@@ -81,6 +118,10 @@ export const STAGE_LABELS: Record<string, string> = {
   self_intro: '自我介绍',
   project: '项目追问',
   position: '岗位能力题',
+  hr_screen: 'HR 基础筛选',
+  professional: '专业 / 业务能力',
+  behavioral: '行为 / 管理能力',
+  weakness: '薄弱项重练',
   qa: '反问环节',
   presenting: '汇报/演讲中',
   ending: '收尾',

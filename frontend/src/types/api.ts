@@ -7,6 +7,8 @@ export interface ProviderStatus {
   base_url: string
   model: string
   has_key: boolean
+  ready: boolean
+  status_message: string
 }
 
 export interface ApiConfigOut {

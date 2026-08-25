@@ -12,7 +12,7 @@ from app.core.exceptions import ResumeParseError
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_EXT = {".pdf", ".docx", ".doc", ".txt"}
+SUPPORTED_EXT = {".pdf", ".docx", ".txt"}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 
@@ -27,13 +27,13 @@ def extract_text(content: bytes, filename: str) -> str:
 
     if ext == ".pdf":
         try:
-            from PyPDF2 import PdfReader
+            from pypdf import PdfReader
             reader = PdfReader(io.BytesIO(content))
             return "\n".join([p.extract_text() or "" for p in reader.pages])
         except Exception as e:
             raise ResumeParseError(f"PDF 解析失败：{e}") from e
 
-    if ext in (".docx", ".doc"):
+    if ext == ".docx":
         try:
             from docx import Document
             doc = Document(io.BytesIO(content))

@@ -8,6 +8,7 @@ from .dashscope_realtime import (
     RealtimeASRSession,
 )
 from .openai_whisper import OpenAIWhisperASR, WhisperASR
+from .sherpa_local import SherpaOnnxASR, SherpaOnnxRealtimeSession
 
 __all__ = [
     "OpenAIWhisperASR",
@@ -15,4 +16,6 @@ __all__ = [
     "DashScopeRealtimeASR",
     "AliyunParaformerASR",
     "RealtimeASRSession",
+    "SherpaOnnxASR",
+    "SherpaOnnxRealtimeSession",
 ]

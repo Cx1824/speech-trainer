@@ -1,7 +1,7 @@
-"""语音情绪特征提取。
+"""可观察声学特征提取。
 
-基于音频片段计算紧张度相关指标。
-真实场景需要连续音频流，MVP 阶段简化为按段分析。
+模块计算音高、能量、停顿和发音密度等训练信号。评分仅表示这些信号
+相对个人朗读基线的变化程度，不用于推断情绪、紧张或其他心理状态。
 """
 
 from __future__ import annotations
@@ -26,11 +26,13 @@ class VoiceFeatures:
     energy_std: float = 0.0
     pause_count: int = 0
     avg_pause_duration: float = 0.0
+    hesitation_count: int = 0           # 0.2-0.5s 短停顿数
+    voiced_ratio: float = 0.0           # 浊音帧占比（声学语速/发音密度用）
     raw: dict = field(default_factory=dict)
 
 
 def extract_features(audio_bytes: bytes, fmt: str = "webm") -> VoiceFeatures:
-    """从音频二进制提取紧张度相关特征。
+    """从音频二进制提取可观察声学特征。
 
     用 librosa 计算基频、能量、停顿。失败时返回空特征（不抛异常）。
     """
@@ -71,17 +73,22 @@ def extract_features(audio_bytes: bytes, fmt: str = "webm") -> VoiceFeatures:
         if len(energy) > 0:
             threshold = np.max(energy) * 0.05
             silent = energy < threshold
-            # 找连续静音段
-            pauses = []
-            cur = 0
-            for s in silent:
-                if s:
-                    cur += 1
-                elif cur > 0:
-                    pauses.append(cur)
-                    cur = 0
-            if cur > 0:
-                pauses.append(cur)
+            # 找正文内部连续静音段；录音首尾等待不属于表达停顿。
+            runs: list[tuple[int, int]] = []
+            start: int | None = None
+            for index, is_silent in enumerate(silent):
+                if is_silent and start is None:
+                    start = index
+                elif not is_silent and start is not None:
+                    runs.append((start, index))
+                    start = None
+            if start is not None:
+                runs.append((start, len(silent)))
+            pauses = [
+                end - start
+                for start, end in runs
+                if start > 0 and end < len(silent)
+            ]
             # 仅统计 > 0.5s 的停顿
             min_frames = int(0.5 * sr / hop)
             valid_pauses = [p for p in pauses if p >= min_frames]
@@ -101,12 +108,14 @@ def extract_features(audio_bytes: bytes, fmt: str = "webm") -> VoiceFeatures:
 
 
 def compute_tension(feats: VoiceFeatures) -> float:
-    """根据特征估算紧张度评分（0-100）。
+    """旧协议兼容的表达波动代理值（0-100）。
 
     启发式规则：
-    - 抖动越大越紧张
-    - 能量起伏越大越紧张
-    - 停顿次数过多/过少都倾向紧张
+    - 音高快速波动增加时升高
+    - 能量起伏增加时升高
+    - 停顿密度明显偏离参考区间时升高
+
+    名称为历史兼容字段，不代表心理状态判断。
     """
     score = 30.0  # 基线
     # pitch jitter（正常范围 0.005-0.03）
@@ -122,7 +131,7 @@ def compute_tension(feats: VoiceFeatures) -> float:
     if feats.energy_mean > 0 and feats.energy_std / (feats.energy_mean + 1e-6) > 1.5:
         score += 15
 
-    # 停顿：过密或过稀都倾向紧张
+    # 停顿：过密或过稀都记为相对参考区间的变化
     if feats.duration_sec > 0:
         pause_rate = feats.pause_count / feats.duration_sec * 60
         if pause_rate > 10 or pause_rate < 1:
@@ -132,15 +141,18 @@ def compute_tension(feats: VoiceFeatures) -> float:
 
 
 # ---------------------------------------------------------------------------
-# 情绪判定 2.0：个人基线 + 连续打分
+# 表达信号偏离 2.0：个人基线 + 连续打分（保留旧函数名兼容协议）
 # ---------------------------------------------------------------------------
 
-# 人群默认基线（校准前的兜底；数值来自常人朗读/对话的典型范围）
+# 未校准时的算法参考值，仅用于回归；不会生成用户可见的稳定性评分。
+# pitch_jitter=0.045 是本管线（25ms 帧 NCF + 轨迹净化）在平稳语音上的
+# 测量噪声底——低于它区分不出生理颤抖，只有强颤抖（>0.07）才升分。
 DEFAULT_BASELINE = {
-    "pitch_jitter": 0.020,      # 快速颤抖率（去趋势后），正常 0.005-0.035
-    "speech_rate": 4.2,         # 字/秒，正常 3.5-5.0
-    "pause_rate": 3.0,          # 每分钟 >0.5s 停顿次数，正常 2-6
-    "pitch_mean": 0.0,          # 个人音域中心（Hz），0=未知不参与
+    "pitch_jitter": 0.045,     # 去趋势+净化后，平稳语音噪声底
+    "speech_rate": 4.2,        # 字/秒，正常 3.5-5.0
+    "pause_rate": 3.0,         # 每分钟 >0.5s 停顿次数，正常 2-6
+    "hesitation_rate": 24.0,   # 每分钟 0.2-0.5s 犹豫短停顿（标点停顿含其中）
+    "pitch_mean": 0.0,         # 个人音域中心（Hz），0=未知不参与
 }
 
 
@@ -151,6 +163,7 @@ class VoiceBaseline:
     pitch_jitter: float = DEFAULT_BASELINE["pitch_jitter"]
     speech_rate: float = DEFAULT_BASELINE["speech_rate"]
     pause_rate: float = DEFAULT_BASELINE["pause_rate"]
+    hesitation_rate: float = DEFAULT_BASELINE["hesitation_rate"]
     pitch_mean: float = DEFAULT_BASELINE["pitch_mean"]
     sample_sec: float = 0.0     # 校准音频总时长（不足 10s 不可信）
     created_at: str = ""        # ISO 时间戳
@@ -163,6 +176,7 @@ class VoiceBaseline:
             "pitch_jitter": round(self.pitch_jitter, 5),
             "speech_rate": round(self.speech_rate, 3),
             "pause_rate": round(self.pause_rate, 3),
+            "hesitation_rate": round(self.hesitation_rate, 3),
             "pitch_mean": round(self.pitch_mean, 1),
             "sample_sec": round(self.sample_sec, 2),
             "created_at": self.created_at,
@@ -176,6 +190,7 @@ class VoiceBaseline:
             pitch_jitter=float(d.get("pitch_jitter", DEFAULT_BASELINE["pitch_jitter"])),
             speech_rate=float(d.get("speech_rate", DEFAULT_BASELINE["speech_rate"])),
             pause_rate=float(d.get("pause_rate", DEFAULT_BASELINE["pause_rate"])),
+            hesitation_rate=float(d.get("hesitation_rate", DEFAULT_BASELINE["hesitation_rate"])),
             pitch_mean=float(d.get("pitch_mean", 0.0)),
             sample_sec=float(d.get("sample_sec", 0.0)),
             created_at=str(d.get("created_at", "")),
@@ -196,62 +211,77 @@ def compute_tension_v2(
     baseline: VoiceBaseline | None = None,
     speech_rate: float | None = None,
 ) -> tuple[float, dict]:
-    """连续打分版紧张度（0-100）+ 明细。
+    """连续计算表达信号偏离代理值（0-100）及明细。
 
-    与旧版差异：
-    - 连续 _ramp 替代跳档加分（分数有梯度）
-    - 有基线时按"偏离个人常态"打分（U 形），无基线用人群默认
-    - 语速（字/秒，ASR 定稿文字÷音频时长）作为独立信号接入
-    - 能量用变异系数（CV=std/mean），对麦克风增益天然归一化
+    v2.1（反差集驱动重校）：
+    - 短停顿和长停顿分开计量，避免把慢速朗读直接视为负面状态。
+    - 基频只相对有效个人基线比较；无个人音域基线时不参与。
+    - 文字语速缺席时，发音密度只作为弱代理信号。
 
-    返回 (score, detail)：detail 是各信号贡献明细，前端可展示"为什么"。
+    返回 (score, detail)。旧函数名和 score 偏移量用于数据兼容；该值没有
+    心理测量含义，未校准时不得作为用户可见的稳定性评分。
     """
     bl = baseline or VoiceBaseline()
     detail: dict[str, float] = {}
 
-    # ---- ① 快速颤抖（pitch jitter，去趋势后）----
-    # 偏离基线 1.5 倍开始升分，3 倍封顶
+    # ---- ① 快速颤抖（pitch jitter，去趋势+净化后）----
+    # 新噪声底 0.045（管线自测）：低于它不升分，1.8 倍起升，3 倍封顶
     j_ratio = feats.pitch_jitter / max(bl.pitch_jitter, 1e-4)
-    j_score = 35.0 * _ramp(j_ratio, 1.5, 3.0)
+    j_score = 30.0 * _ramp(j_ratio, 1.8, 3.0)
     detail["jitter"] = round(j_score, 1)
 
-    # ---- ② 语速偏离（字/秒，U 形：过快过慢都紧张）----
-    # 基线 ±20% 舒适区；过快侧 1.6 倍基线封顶（语速飙升=强紧张信号）
+    # ---- ② 基频变化（相对个人音域中心，需校准基线）----
+    # 不使用人群音高先验，避免把音色差异误当作训练状态变化。
+    p_score = 0.0
+    if feats.pitch_mean > 0 and bl.pitch_mean > 0:
+        p_ratio = feats.pitch_mean / bl.pitch_mean
+        # 抬升 ≥8% 起分（语调上扬自然波动内不罚），25% 封顶
+        p_score = 20.0 * _ramp(p_ratio - 1.0, 0.08, 0.25)
+        detail["pitch_rise"] = round(p_score, 1)
+        detail["pitch_ratio"] = round(p_ratio, 2)
+
+    # ---- ③ 短停顿密度（0.2-0.5s 短停顿/分钟）----
+    # 自然标点停顿也可能落入此带，因此只比较相对个人基线的明显变化。
+    h_score = 0.0
+    if feats.duration_sec >= 3.0:
+        hrate = feats.hesitation_count / feats.duration_sec * 60
+        h_ratio = hrate / max(bl.hesitation_rate, 5.0)
+        if h_ratio > 1.4:
+            h_score = 20.0 * _ramp(h_ratio, 1.4, 3.0)
+        detail["hesitation"] = round(h_score, 1)
+        detail["hesitation_ratio"] = round(h_ratio, 2)
+        # 长停顿过多只做轻微信号（漏字/忘词的长卡壳），不再 U 形重罚
+        prate = feats.pause_count / feats.duration_sec * 60
+        p_ratio = prate / max(bl.pause_rate, 0.5)
+        if p_ratio > 2.0:
+            detail["pause"] = round(6.0 * _ramp(p_ratio, 2.0, 5.0), 1)
+            h_score += detail["pause"]
+
+    # ---- ④ 语速（文字语速优先，发音密度兜底）----
     s_score = 0.0
     if speech_rate and speech_rate > 0:
         s_ratio = speech_rate / max(bl.speech_rate, 0.5)
-        lo, hi = 0.8, 1.2
-        if s_ratio > hi:
-            s_score = 25.0 * _ramp(s_ratio, hi, 1.6)
-        elif s_ratio < lo:
-            s_score = 18.0 * _ramp(lo - s_ratio, 0.0, 0.45)
+        if s_ratio > 1.2:
+            s_score = 25.0 * _ramp(s_ratio, 1.2, 1.6)
+        elif s_ratio < 0.8:
+            s_score = 10.0 * _ramp(0.8 - s_ratio, 0.0, 0.4)
         detail["speech_rate"] = round(s_score, 1)
         detail["speech_rate_ratio"] = round(s_ratio, 2)
+    elif feats.voiced_ratio > 0:
+        # 发音密度兜底：正常连续朗读 0.30-0.45（合成集实测），>0.55 急促
+        v_score = 12.0 * _ramp(feats.voiced_ratio, 0.45, 0.65)
+        detail["voiced_density"] = round(v_score, 1)
+        s_score = v_score
 
-    # ---- ③ 停顿密度偏离（每分钟停顿数，U 形）----
-    # 基线 ±50% 舒适（停顿本身个体差异大）；短句天然停顿少，需要最小区间保护
-    p_score = 0.0
-    if feats.duration_sec >= 3.0:  # <3s 的短句不评停顿（样本不足必误判）
-        prate = feats.pause_count / feats.duration_sec * 60
-        p_ratio = prate / max(bl.pause_rate, 0.5)
-        if p_ratio > 1.5:
-            p_score = 18.0 * _ramp(p_ratio, 1.5, 4.0)
-        elif p_ratio < 1 / 1.5:
-            # 停顿过少（语流过密不换气）——轻微信号
-            p_score = 8.0 * _ramp(1 / 1.5 - p_ratio, 0.0, 0.6)
-        detail["pause"] = round(p_score, 1)
-        detail["pause_ratio"] = round(p_ratio, 2)
-
-    # ---- ④ 能量起伏（CV，增益归一化）----
-    # 正常说话 CV（每帧能量）约 0.5-1.0；>1.6 显著起伏
+    # ---- ⑤ 能量起伏（CV，增益归一化）----
     if feats.energy_mean > 0:
         cv = feats.energy_std / (feats.energy_mean + 1e-9)
-        e_score = 12.0 * _ramp(cv, 1.2, 2.2)
+        e_score = 10.0 * _ramp(cv, 1.4, 2.4)
         detail["energy"] = round(e_score, 1)
         detail["energy_cv"] = round(cv, 2)
     else:
         e_score = 0.0
 
-    # 基线 25：即使所有信号都平稳也给一个非零底（真实人不可能 0 紧张）
-    score = 25.0 + j_score + s_score + p_score + e_score
+    # 历史量表保留 25 点偏移量，确保旧数据和阈值可继续读取。
+    score = 25.0 + j_score + p_score + h_score + s_score + e_score
     return max(0.0, min(100.0, score)), detail

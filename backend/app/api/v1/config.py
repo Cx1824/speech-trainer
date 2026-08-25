@@ -10,6 +10,7 @@ from app.core.database import get_session
 from app.core.exceptions import ConfigError
 from app.modules.config import load_config, load_provider_config, save_config
 from app.providers import get_asr, get_llm, get_tts
+from app.providers.asr.realtime import asr_requires_api_key
 
 router = APIRouter()
 
@@ -38,7 +39,11 @@ async def test_provider(
 
     # 前置检查：关键字段是否配置
     missing = []
-    if cfg.provider != "edge" and not cfg.api_key:
+    requires_key = not (
+        (kind == "tts" and cfg.provider == "edge")
+        or (kind == "asr" and not asr_requires_api_key(cfg.provider))
+    )
+    if requires_key and not cfg.api_key:
         missing.append("API Key")
     if kind in ("llm", "tts") and cfg.provider not in ("qwen_audio", "cosyvoice", "aliyun_tts", "edge") and not cfg.base_url:
         missing.append("Base URL")
@@ -54,7 +59,13 @@ async def test_provider(
             provider = get_asr(cfg)
         ok = await provider.health_check()
         if ok:
-            message = "连通正常（已用真实调用验证）"
+            message = (
+                "本地语音识别可用，音频不会上传"
+                if kind == "asr" and not asr_requires_api_key(cfg.provider)
+                else "配置可用"
+            )
+        elif kind == "asr" and not asr_requires_api_key(cfg.provider):
+            message = "本地语音模型尚未安装或无法加载，请先完成本地模型安装"
         else:
             message = (
                 "连通失败：真实调用未通过。"

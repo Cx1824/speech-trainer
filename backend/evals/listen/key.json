@@ -1,0 +1,83 @@
+[
+ {
+  "file": "t01",
+  "label": "mid_m",
+  "voice": "YunxiNeural",
+  "rate_percent": 15,
+  "pitch_hz": 15,
+  "char_count": 135,
+  "truth_1to5": 3.0
+ },
+ {
+  "file": "t02",
+  "label": "verytense_f",
+  "voice": "XiaoxiaoNeural",
+  "rate_percent": 50,
+  "pitch_hz": 60,
+  "char_count": 135,
+  "truth_1to5": 5.0
+ },
+ {
+  "file": "t03",
+  "label": "shaky_f",
+  "voice": "XiaoxiaoNeural",
+  "rate_percent": 0,
+  "pitch_hz": 10,
+  "char_count": 136,
+  "truth_1to5": 4.0
+ },
+ {
+  "file": "t04",
+  "label": "tense_f",
+  "voice": "XiaoxiaoNeural",
+  "rate_percent": 30,
+  "pitch_hz": 40,
+  "char_count": 135,
+  "truth_1to5": 4.0
+ },
+ {
+  "file": "t05",
+  "label": "shaky_m",
+  "voice": "YunxiNeural",
+  "rate_percent": 0,
+  "pitch_hz": 10,
+  "char_count": 136,
+  "truth_1to5": 4.0
+ },
+ {
+  "file": "t06",
+  "label": "mid_f",
+  "voice": "XiaoxiaoNeural",
+  "rate_percent": 15,
+  "pitch_hz": 15,
+  "char_count": 135,
+  "truth_1to5": 3.0
+ },
+ {
+  "file": "t07",
+  "label": "tense_m",
+  "voice": "YunxiNeural",
+  "rate_percent": 30,
+  "pitch_hz": 40,
+  "char_count": 135,
+  "truth_1to5": 4.0
+ },
+ {
+  "file": "t08",
+  "label": "calm_f",
+  "voice": "XiaoxiaoNeural",
+  "rate_percent": 0,
+  "pitch_hz": 0,
+  "char_count": 135,
+  "truth_1to5": 1.0
+ },
+ {
+  "file": "t09",
+  "label": "calm_m_slow",
+  "voice": "YunxiNeural",
+  "rate_percent": -10,
+  "pitch_hz": 0,
+  "char_count": 135,
+  "truth_1to5": 1.0
+ }
+]

@@ -1,0 +1,247 @@
+{
+  "dataset": {
+    "name": "Google FLEURS cmn_hans_cn test",
+    "license": "CC BY 4.0",
+    "homepage": "https://huggingface.co/datasets/google/fleurs",
+    "audio_mirror": "https://huggingface.co/datasets/FluidInference/fleurs-full/tree/main/cmn_hans_cn",
+    "retrieved_at": "2026-08-23",
+    "selection": "24 evenly distributed mirror indexes, retaining repeated texts when they provide a direct cross-voice comparison",
+    "limitations": [
+      "FLEURS is read speech, not spontaneous interview or presentation speech.",
+      "The public metadata exposes gender but not a stable speaker identifier; this manifest does not claim 24 unique speakers.",
+      "Audio files are kept in the git-ignored evals/listen/audio directory and must be downloaded separately."
+    ]
+  },
+  "control_samples": [
+    {
+      "id": "0023",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0023.wav",
+      "gender": "female",
+      "duration_sec": 8.46,
+      "text": "pH 值以被测化学品中的氢（pH 中的 H）离子数量表示。",
+      "sha256": "8f483a60184e29c1e17a5fb9b82a3366d43c01a1a11612270fa2b977ffebbd11",
+      "control_for": "0888"
+    },
+    {
+      "id": "0265",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0265.wav",
+      "gender": "male",
+      "duration_sec": 9.72,
+      "text": "pH 值以被测化学品中的氢（pH 中的 H）离子数量表示。",
+      "sha256": "4e79f5634530576b148022b977fca54408807b139516ef71fc7e233d5e8f6f43",
+      "control_for": "0888"
+    },
+    {
+      "id": "0267",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0267.wav",
+      "gender": "female",
+      "duration_sec": 8.64,
+      "text": "邓迪大学（University of Dundee）的 Pamela Ferguson 教授指出：“记者如果公布嫌疑人的照片等信息的话，似乎确实存在危害性。”",
+      "sha256": "c558f6fba0d4421a118a13062c482c310a7f2fafad336984449d26778ccec0d6",
+      "control_for": "0555"
+    },
+    {
+      "id": "0459",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0459.wav",
+      "gender": "male",
+      "duration_sec": 15.08,
+      "text": "邓迪大学（University of Dundee）的 Pamela Ferguson 教授指出：“记者如果公布嫌疑人的照片等信息的话，似乎确实存在危害性。”",
+      "sha256": "877e4033d7b784e0209bfc7d98954d004c8dd0f3a3b781a27261cda4a03bcb44",
+      "control_for": "0555"
+    }
+  ],
+  "samples": [
+    {
+      "id": "0000",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0000.wav",
+      "gender": "male",
+      "duration_sec": 10.38,
+      "text": "“这并不是告别。这是一个篇章的结束，也是新篇章的开始。”",
+      "sha256": "5214e16584b6498ddbd22f321738c0f62b19117ab1880b21e405fba983986b6a"
+    },
+    {
+      "id": "0020",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0020.wav",
+      "gender": "male",
+      "duration_sec": 15.16,
+      "text": "特朗普与土耳其总统雷杰普·塔伊普·埃尔多安（Recep Tayyip Erdoğan）通话后发表了声明。",
+      "sha256": "a4a008eea609c3f46feb07a424a4e84d061bf620cc6ec2cfd5ca90c101beafc7"
+    },
+    {
+      "id": "0041",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0041.wav",
+      "gender": "male",
+      "duration_sec": 7.14,
+      "text": "二十世纪的研究表明，基因变异有两种库：显性和隐性。",
+      "sha256": "fa7b3fa8c7148c5520fadd69ab6ea75534ecfc447cbc1dc6520553c716142349"
+    },
+    {
+      "id": "0063",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0063.wav",
+      "gender": "male",
+      "duration_sec": 10.9,
+      "text": "对儿童来说，金字塔的声光表演是该地区最有趣的活动之一。",
+      "sha256": "4ae712e496ea97bb86f092d63a2bbaf457ddfc5954f809870c2f7b49484c8cdd"
+    },
+    {
+      "id": "0085",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0085.wav",
+      "gender": "female",
+      "duration_sec": 4.74,
+      "text": "但鸟类还是有很多地方跟恐龙相似。",
+      "sha256": "095debea1f7def6079c2e5bd56c0deeaf54def312516b61e293fd4b2b7396a04"
+    },
+    {
+      "id": "0110",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0110.wav",
+      "gender": "female",
+      "duration_sec": 12.72,
+      "text": "胡纳已经辞职，他在内阁中的位置将由国会议员埃德·戴维 (Ed Davey) 接替。预计国会议员诺曼·兰姆 (Norman Lamb) 将接替戴维空出的商务部长一职。",
+      "sha256": "443ffc4aa96dc3db7dc18b37d88333a7183ea3ccef04e066cdb84c43bd027eb6"
+    },
+    {
+      "id": "0144",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0144.wav",
+      "gender": "male",
+      "duration_sec": 13.9,
+      "text": "小心不要让衣服变得太热（这可能会产生收缩现象，在极端情况下会把衣服烤焦）。",
+      "sha256": "558582f8bb8dfa2432c96704a05b1b9aee93208ddf514c7f2bbc8c8ee6491397"
+    },
+    {
+      "id": "0173",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0173.wav",
+      "gender": "male",
+      "duration_sec": 14.86,
+      "text": "交通流量研究的是驾驶员和车辆在两点之间的运动，以及它们之间的相互作用。",
+      "sha256": "e27142c798a80c92acd96becd2b56878bc952eb4c372c952c76c2abf6a7fdfe5"
+    },
+    {
+      "id": "0208",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0208.wav",
+      "gender": "male",
+      "duration_sec": 10.2,
+      "text": "虚拟支持内化在软件中，用来质疑、提示和解释那些可能对学生来说难以独自处理的程序。",
+      "sha256": "2c130c47ae74549ca6b33e06a547e2165e14f665380d29cefe6667fa5602fe47"
+    },
+    {
+      "id": "0249",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0249.wav",
+      "gender": "male",
+      "duration_sec": 11.16,
+      "text": "人工智能有很强的科幻色彩，但它其实是计算机科学非常重要的一个分支，研究的是机器的行为、学习和智能适应。",
+      "sha256": "db18036589b4af229f4e5d39bc8199143d7f2f5bd0bc141360a8a727ddfc4b49"
+    },
+    {
+      "id": "0275",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0275.wav",
+      "gender": "female",
+      "duration_sec": 7.98,
+      "text": "特朗普与土耳其总统雷杰普·塔伊普·埃尔多安（Recep Tayyip Erdoğan）通话后发表了声明。",
+      "sha256": "4e22cfd12b428e35062f31a07746e662bddb7fe8a6ea821b1159b8ce535e46ca"
+    },
+    {
+      "id": "0317",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0317.wav",
+      "gender": "female",
+      "duration_sec": 5.1,
+      "text": "阴暗面下面的地壳薄一些，高地下的地壳厚一些。",
+      "sha256": "d7945be7e12fdf90423ad225db93624e05565899978ef01ea68bee21f6277853"
+    },
+    {
+      "id": "0360",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0360.wav",
+      "gender": "female",
+      "duration_sec": 5.58,
+      "text": "“这并不是告别。这是一个篇章的结束，也是新篇章的开始。”",
+      "sha256": "2064c2cf76ec29b0a5f8ab428a8bf6584cbde5871523e635af419c85ec483a69"
+    },
+    {
+      "id": "0404",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0404.wav",
+      "gender": "female",
+      "duration_sec": 7.8,
+      "text": "任何在高纬度地区开车或翻越山口的人，都应该考虑到可能遭遇下雪、结冰或冻结温度的情况。",
+      "sha256": "4ddd95de1f2ebde4e188a1cb6cc1c5f1f21c75fd7500632309b2429bce5340c0"
+    },
+    {
+      "id": "0450",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0450.wav",
+      "gender": "female",
+      "duration_sec": 10.32,
+      "text": "国会从 2005 财年开始资助该扫黄倡议，并规定联邦调查局 (FBI) 必须指派 10 名探员专门打击成人色情。",
+      "sha256": "ddd102af7644a1fafa108c631806b9bc627d271de0130e9274fdbaf54e364df2"
+    },
+    {
+      "id": "0500",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0500.wav",
+      "gender": "male",
+      "duration_sec": 16.46,
+      "text": "事件发生的时代通常被称为欧洲史的中世纪盛时，即的 11、12 和 13世纪时期（公元 1000-1300 年）。",
+      "sha256": "a5eeb8869a1b33d4dd7a00ccb4b7d66f17f0f9173c74f93b64f1ef03f091ae19"
+    },
+    {
+      "id": "0555",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0555.wav",
+      "gender": "female",
+      "duration_sec": 10.74,
+      "text": "邓迪大学（University of Dundee）的 Pamela Ferguson 教授指出：“记者如果公布嫌疑人的照片等信息的话，似乎确实存在危害性。”",
+      "sha256": "8a9be53e8fd47ceaf2be5268314d7790cde0d24e90b78c22da3664554f4cfa10"
+    },
+    {
+      "id": "0610",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0610.wav",
+      "gender": "male",
+      "duration_sec": 12.3,
+      "text": "博客还能帮助学生提高写作能力。尽管学生们开始写博客时，用的语法和拼写往往都很马虎，读者的出现通常会改变这一状况。",
+      "sha256": "8143b31b23865868f2232fe2b64a98f2d7ed13cae744cfad526be93e27bd5d04"
+    },
+    {
+      "id": "0666",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0666.wav",
+      "gender": "male",
+      "duration_sec": 11.24,
+      "text": "一枚炸弹在总督办公室外爆炸。",
+      "sha256": "134c5fbfb843f27f753f8bac23a40dcf69a86ec2d8fac1c64984286ccd3bf831"
+    },
+    {
+      "id": "0720",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0720.wav",
+      "gender": "male",
+      "duration_sec": 13.68,
+      "text": "重返家园的冲击比文化冲击来得更快（蜜月期更短），持续时间更长，也可能更严重。",
+      "sha256": "0dba1c5e31aeda1e4b5216c4eb064b5f97a060b0b33b67444cbd0cc1686eeeb0"
+    },
+    {
+      "id": "0777",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0777.wav",
+      "gender": "male",
+      "duration_sec": 10.32,
+      "text": "美国陆军工兵部队估计，6 英寸的降雨量就可能冲垮之前损坏的堤坝。",
+      "sha256": "3fe34b75b0d7e6ce91d7a410b404e25177ca79a2a3f25680a0ad730236033d0b"
+    },
+    {
+      "id": "0830",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0830.wav",
+      "gender": "male",
+      "duration_sec": 9.96,
+      "text": "两位摄影师其后顶替一位需要上洗手间的老妇。门多萨则被击毙。",
+      "sha256": "0729a26c168ec0244c0aa74e41b26fa59424d0675b232aa558ec94602baa5bc3"
+    },
+    {
+      "id": "0888",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0888.wav",
+      "gender": "female",
+      "duration_sec": 7.32,
+      "text": "pH 值以被测化学品中的氢（pH 中的 H）离子数量表示。",
+      "sha256": "4aac757d9f59746046156c4ba5eb7fb8b5e7d06ce6de5bca7694be434864be92"
+    },
+    {
+      "id": "0944",
+      "file": "listen/audio/web_fleurs/cmn_hans_cn_0944.wav",
+      "gender": "male",
+      "duration_sec": 13.68,
+      "text": "买一张万能卡（Wild Card）也有不少好处。带着这张卡，你可以进入南非的一些公园或全部的国家公园。",
+      "sha256": "b039dd54bb5596d59bc893243e941d9eb0fcff04bbfe94ee2a0faf30b5f7479f"
+    }
+  ]
+}

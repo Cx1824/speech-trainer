@@ -83,13 +83,34 @@ class TestPackFlags:
         assert p.timed is True
 
 
-class TestReportFocus:
-    def test_all_have_advice_sections(self):
+class TestEvaluationProfile:
+    def test_all_profiles_are_complete(self):
         for pack in REGISTRY.values():
-            assert len(pack.report_focus.advice_sections) >= 3
-            assert len(pack.report_focus.dimensions) >= 3
+            evaluation = pack.evaluation
+            assert evaluation.version
+            assert len(evaluation.advice_sections) >= 3
+            assert sum(axis.weight for axis in evaluation.axes) == 100
+            assert any(axis.source == "signal" for axis in evaluation.axes)
+            assert any(axis.source == "llm" for axis in evaluation.axes)
 
-    def test_focus_differs_by_scenario(self):
-        iv = REGISTRY["interview"].report_focus
-        pres = REGISTRY["presentation"].report_focus
-        assert iv.advice_sections != pres.advice_sections
+    def test_semantic_axes_differ_by_scenario(self):
+        semantic_keys = {
+            pack.key: {
+                axis.key for axis in pack.evaluation.axes if axis.source == "llm"
+            }
+            for pack in REGISTRY.values()
+        }
+        assert len({frozenset(keys) for keys in semantic_keys.values()}) == 3
+
+    def test_shared_signal_keys_are_consistent(self):
+        expected = {
+            "continuity",
+            "pacing",
+        }
+        for pack in REGISTRY.values():
+            actual = {
+                axis.signal_key
+                for axis in pack.evaluation.axes
+                if axis.source == "signal"
+            }
+            assert actual == expected

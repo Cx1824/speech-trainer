@@ -53,6 +53,31 @@ class TestPcmFeatureBuffer:
         assert feats is not None
         assert feats.pause_count >= 1
 
+    def test_background_noise_does_not_hide_pause(self):
+        """持续底噪中的停顿仍应被识别，不能把噪声当作连续发音。"""
+        buf = PcmFeatureBuffer()
+        buf.push(concat(
+            sine_pcm(180, 1.0),
+            sine_pcm(60, 0.8, amp=0.18),
+            sine_pcm(180, 1.0),
+        ))
+
+        feats = buf.flush()
+
+        assert feats.pause_count == 1
+
+    def test_recording_edges_are_not_expression_pauses(self):
+        """开口前和说完后的静音不应记为正文停顿。"""
+        buf = PcmFeatureBuffer()
+        buf.push(concat(
+            silence_pcm(1.0),
+            sine_pcm(180, 1.0),
+            silence_pcm(1.0),
+        ))
+        feats = buf.flush()
+        assert feats.pause_count == 0
+        assert feats.hesitation_count == 0
+
     def test_flush_clears_buffer(self):
         buf = PcmFeatureBuffer()
         buf.push(sine_pcm(150, 1.0))

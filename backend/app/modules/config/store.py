@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.core.database import ApiConfigRow
+from app.core.exceptions import ConfigError
 from app.schemas import ApiConfigIn, ApiConfigOut, ProviderConfigIn, ProviderStatus
 
 
@@ -95,7 +96,29 @@ async def _get_row(db: AsyncSession) -> Optional[ApiConfigRow]:
 
 def _merge(old_json: str, new: ProviderConfigIn) -> str:
     old = json.loads(old_json) if old_json else {}
-    merged = {**old, **new.model_dump(exclude_none=True)}
+    updates = new.model_dump(include=new.model_fields_set)
+
+    destination_changed = any(
+        field in updates and updates[field] != old.get(field, "")
+        for field in ("provider", "base_url")
+    )
+    has_saved_secret = bool(old.get("api_key") or old.get("api_secret"))
+    supplied_new_secret = bool(updates.get("api_key") or updates.get("api_secret"))
+    old_provider = str(old.get("provider", ""))
+    new_provider = str(updates.get("provider", old_provider))
+    switching_through_local_asr = (
+        old_provider in {"sherpa_onnx", "sherpa-onnx", "sherpa"}
+        or new_provider in {"sherpa_onnx", "sherpa-onnx", "sherpa"}
+    )
+    if (
+        destination_changed
+        and has_saved_secret
+        and not supplied_new_secret
+        and not switching_through_local_asr
+    ):
+        raise ConfigError("更换厂商或 Base URL 时，请重新输入对应的 API Key")
+
+    merged = {**old, **updates}
     return json.dumps(merged, ensure_ascii=False)
 
 
@@ -106,19 +129,41 @@ def _status_from_row_or_env(
 ) -> ProviderStatus:
     if row_json:
         data = json.loads(row_json)
-        return ProviderStatus(
-            provider=data.get("provider", "custom"),
-            base_url=data.get("base_url", ""),
-            model=data.get("model", ""),
-            has_key=bool(data.get("api_key")),
-        )
+        pc = ProviderConfigIn(**data)
+        return _provider_status(pc, kind)
     # env fallback
     pc = _provider_from_env(kind, settings)
+    return _provider_status(pc, kind)
+
+
+def _provider_status(config: ProviderConfigIn, kind: str) -> ProviderStatus:
+    has_key = bool(config.api_key)
+    if kind == "asr" and config.provider in {"sherpa_onnx", "sherpa-onnx", "sherpa"}:
+        from app.providers.asr.sherpa_local import (
+            local_finalizer_ready,
+            local_model_ready,
+        )
+
+        ready = local_model_ready(config)
+        if ready and local_finalizer_ready(config):
+            message = "本地实时识别和句末精校均已启用，音频不会上传"
+        elif ready:
+            message = "本地实时识别可用；句末精校模型尚未安装"
+        else:
+            message = "本地实时识别模型尚未安装"
+    elif kind == "tts" and config.provider == "edge":
+        ready = True
+        message = "无需密钥"
+    else:
+        ready = has_key
+        message = "密钥已配置" if ready else "尚未配置密钥"
     return ProviderStatus(
-        provider=pc.provider,
-        base_url=pc.base_url or "",
-        model=pc.model or "",
-        has_key=bool(pc.api_key),
+        provider=config.provider,
+        base_url=config.base_url or "",
+        model=config.model or "",
+        has_key=has_key,
+        ready=ready,
+        status_message=message,
     )
 
 

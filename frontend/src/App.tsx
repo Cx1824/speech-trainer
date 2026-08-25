@@ -1,22 +1,32 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { lazy, Suspense } from 'react'
 import AppLayout from './components/Layout/AppLayout'
-import Home from './pages/Home'
-import Interview from './pages/Interview'
-import Report from './pages/Report'
-import Settings from './pages/Settings'
-import QuestionBank from './pages/QuestionBank'
+
+const Home = lazy(() => import('./pages/Home'))
+const Interview = lazy(() => import('./pages/Interview'))
+const Report = lazy(() => import('./pages/Report'))
+const Settings = lazy(() => import('./pages/Settings'))
+const QuestionBank = lazy(() => import('./pages/QuestionBank'))
 
 export default function App() {
   return (
-    <Routes>
-      <Route element={<AppLayout />}>
-        <Route path="/" element={<Home />} />
-        <Route path="/interview" element={<Interview />} />
-        <Route path="/report/:id" element={<Report />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/question-bank" element={<QuestionBank />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
-    </Routes>
+    <Suspense fallback={<div style={{ padding: 48, textAlign: 'center' }}>正在加载页面…</div>}>
+      <Routes>
+        <Route element={<AppLayout />}>
+          <Route path="/" element={<Home />} />
+          <Route path="/training" element={<Interview />} />
+          <Route path="/interview" element={<LegacyTrainingRedirect />} />
+          <Route path="/report/:id" element={<Report />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/question-bank" element={<QuestionBank />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </Suspense>
   )
+}
+
+function LegacyTrainingRedirect() {
+  const { search } = useLocation()
+  return <Navigate to={`/training${search}`} replace />
 }

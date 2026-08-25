@@ -6,7 +6,8 @@
 from __future__ import annotations
 
 from app.modules.scenarios.base import (
-    ReportFocus,
+    EvaluationAxis,
+    EvaluationProfile,
     ScenarioContext,
     ScenarioPack,
     ScenarioStage,
@@ -37,7 +38,8 @@ __all__ = [
     "DEFAULT_SCENARIO",
     "get_pack",
     "list_packs",
-    "ReportFocus",
+    "EvaluationAxis",
+    "EvaluationProfile",
     "ScenarioContext",
     "ScenarioPack",
     "ScenarioStage",

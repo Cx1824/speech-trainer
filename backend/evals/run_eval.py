@@ -1,9 +1,9 @@
-"""声学管线评测：合成真值集 vs 管线输出 → markdown 报表。
+"""声学管线评测：合成回归集 vs 管线输出 → markdown 报表。
 
 用法（backend venv）：
     .venv/bin/python evals/run_eval.py [--dataset evals/dataset] [--report evals/REPORT.md]
 
-评测项与真值口径：
+评测项与构造口径：
   A. 基频（f0）
      - 同音色跨条稳定性：f0 中位数变异应 <8%（音色固定）
      - 性别区间：男声 85-200Hz、女声 160-320Hz（八度错误直接暴露）
@@ -12,7 +12,7 @@
      - 用 LivePcmTracker.speech_sec 做分母（与线上同口径）
   C. jitter（平稳参考带）
      - TTS 平稳发声 → detrended jitter 分布记录为"机器平稳带"
-     - 真人紧张应显著高于此带（后续真人阶段使用）
+     - 只验证提取管线稳定性，不外推为真人心理状态
   D. 停顿计数
      - base 文本含固定标点停顿位 → 记录 pause_count 分布（一致性参考）
 """
@@ -88,9 +88,14 @@ def main() -> None:
     lines: list[str] = ["# 声学管线评测报告（合成真值集）", ""]
 
     # A. 基频
+    # 稳定性检验只在同文本（base 系列 5 档语速）内做：不同文本的语调演绎
+    # 差异是 TTS 行为不是测量误差——filler 口癖词被疑问语气演绎（+30% 跳变）、
+    # long 文本数字串降调（Yunyang long=110.7 vs base≈131），混入只会稀释检验。
     lines += ["## A. 基频（f0）", "", "| 音色 | 条数 | f0中位数 | 跨条CV | 判定 |", "|---|---|---|---|---|"]
     summary: dict[str, list[float]] = {}
     for r in f0_rows:
+        if r["text_key"] != "base":
+            continue
         summary.setdefault(r["voice"], []).append(r["pitch_mean"])
     gender = {r["voice"]: r["gender"] for r in f0_rows}
     f0_pass = True
@@ -137,7 +142,7 @@ def main() -> None:
     if jit_vals:
         arr = np.array(jit_vals)
         lines += [f"- 条目数 {len(arr)}，中位数 {np.median(arr):.4f}，P90 {np.percentile(arr, 90):.4f}，最大 {arr.max():.4f}",
-                  f"- 机器平稳带参考：≤ {np.percentile(arr, 95):.4f}（真人紧张应显著高于此带，后续真人阶段校验）"]
+                  f"- 合成语音参考带：≤ {np.percentile(arr, 95):.4f}（只验证提取管线；真人变化方向需另行录音验证）"]
 
     # D. 停顿分布（一致性参考，不设硬线）
     lines += ["", "## D. 停顿计数分布（base 文本，参考）", "",

@@ -29,6 +29,14 @@ async def list_styles() -> dict:
     return {"styles": all_styles()}
 
 
+@router.get("/modes")
+async def list_interview_modes() -> dict:
+    """列出面试类型、训练强度与预计耗时。"""
+    from app.modules.interview.planner import list_modes
+
+    return list_modes()
+
+
 @router.get("/scenarios")
 async def list_scenarios() -> dict:
     """列出所有训练场景（前端首页卡片用）。"""
@@ -82,6 +90,10 @@ async def update_interview(
         company=payload.company,
         jd_url=payload.jd_url,
         jd_content=payload.jd_content,
+        duration_limit=payload.duration_limit,
+        interview_mode=payload.interview_mode,
+        interview_intensity=payload.interview_intensity,
+        source_session_id=payload.source_session_id,
     )
 
 
@@ -172,17 +184,12 @@ async def end(
     db: AsyncSession = Depends(get_session),
 ) -> schemas.InterviewSessionOut:
     """结束面试（HTTP 兜底，不依赖 WS 存活）。"""
-    from sqlalchemy import select
-    from app.models.interview import InterviewSessionRow
+    # 浏览器正常结束时 WS 与本请求几乎同时到达。若有活动语音连接，先让它
+    # 冲刷内存中的 final/partial，再标记完成，避免报告抢先读到空对话。
+    from app.api.v1.voice_ws import wait_for_voice_flush
 
-    res = await db.execute(select(InterviewSessionRow).where(InterviewSessionRow.id == sid))
-    row = res.scalar_one_or_none()
-    if row:
-        row.status = "completed"
-        row.current_stage = "report"
-        await db.commit()
-        await db.refresh(row)
-    return row
+    await wait_for_voice_flush(sid)
+    return await interview.complete_interview(db, sid)
 
 
 @router.get("/{sid}/dialogues", response_model=list[schemas.DialogueOut])

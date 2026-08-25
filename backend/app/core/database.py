@@ -26,6 +26,10 @@ _MIGRATIONS: dict[str, list[tuple[str, Column]]] = {
         ("material_text", Column("material_text", Text, default="")),
         ("duration_limit", Column("duration_limit", Integer, default=0)),
         ("started_at", Column("started_at", DateTime)),
+        ("interview_mode", Column("interview_mode", String(32), default="full")),
+        ("interview_intensity", Column("interview_intensity", String(32), default="standard")),
+        ("source_session_id", Column("source_session_id", String(36), default="")),
+        ("interview_plan_json", Column("interview_plan_json", Text, default="")),
     ],
     "api_config": [
         ("voice_baseline_json", Column("voice_baseline_json", Text, default="")),

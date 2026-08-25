@@ -1,5 +1,5 @@
 /**
- * 声音校准卡片：朗读一段校准文本 → 建立个人声学基线（情绪 2.0）。
+ * 声音校准卡片：朗读一段校准文本 → 建立个人表达基线。
  *
  * 流程：
  *   1. GET /config/voice-calibration 拿校准文本 + 当前基线状态
@@ -57,7 +57,7 @@ export default function VoiceCalibration({ onChanged }: VoiceCalibrationProps) {
         calibrated: d.calibrated,
         baseline: d.baseline,
       }))
-    } catch (e) {
+    } catch {
       setSt((s) => ({ ...s, loading: false }))
     }
   }
@@ -137,9 +137,10 @@ export default function VoiceCalibration({ onChanged }: VoiceCalibrationProps) {
       const src = ctx.createMediaStreamSource(stream)
       src.connect(node)
       node.port.onmessage = (e: MessageEvent) => {
-        const { pcm } = e.data as { pcm: ArrayBuffer }
+        const { pcm, flushed } = e.data as { pcm: ArrayBuffer; flushed?: boolean }
         if (ws.readyState !== WebSocket.OPEN) return
-        ws.send(pcm)
+        if (pcm.byteLength) ws.send(pcm)
+        if (flushed) ws.send(JSON.stringify({ type: 'finish' }))
       }
     } catch (e) {
       message.error(`无法开始校准：${e}`)
@@ -150,7 +151,8 @@ export default function VoiceCalibration({ onChanged }: VoiceCalibrationProps) {
 
   const finishCalibration = () => {
     setSt((s) => ({ ...s, phase: 'analyzing' }))
-    wsRef.current?.send(JSON.stringify({ type: 'finish' }))
+    if (nodeRef.current) nodeRef.current.port.postMessage({ type: 'flush' })
+    else wsRef.current?.send(JSON.stringify({ type: 'finish' }))
   }
 
   const resetCalibration = async () => {
@@ -168,7 +170,8 @@ export default function VoiceCalibration({ onChanged }: VoiceCalibrationProps) {
 
   return (
     <Card
-      title="声音校准（情绪判定基线）"
+      className="voice-calibration-card"
+      title="声音校准（个人表达基线）"
       style={{ marginBottom: 24 }}
       extra={
         st.calibrated ? (
@@ -183,8 +186,8 @@ export default function VoiceCalibration({ onChanged }: VoiceCalibrationProps) {
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
-          message="先做一次声音校准，紧张度评估更准"
-          description="请用平时说话最自然、放松的状态朗读下面这段话（约 30 秒）。系统会记录你的语速、音调与停顿习惯作为个人基线，之后训练中的紧张度将按「偏离你自己平时多少」来评判。换人使用时重新校准即可。"
+          message="先建立一次个人表达基线"
+          description="请用平时自然说话的方式朗读下面这段话（约 30 秒）。系统会记录语速、音调与停顿习惯，训练时只比较本次表达相对个人基线的可观察变化，不推断紧张、自信或其他心理状态。换人使用时请重新校准。"
         />
       )}
       {st.calibrated && st.baseline && (
@@ -192,7 +195,7 @@ export default function VoiceCalibration({ onChanged }: VoiceCalibrationProps) {
           type="success"
           showIcon
           style={{ marginBottom: 12 }}
-          message="已建立个人基线，训练中的紧张度按你的个人习惯评估"
+          message="已建立个人表达基线，训练时将比较声音与节奏的相对变化"
           description={`校准时间：${String(st.baseline.created_at || '').slice(0, 19).replace('T', ' ')} · 朗读 ${Number(st.baseline.sample_sec || 0).toFixed(0)} 秒 · 语速 ${Number(st.baseline.speech_rate || 0).toFixed(1)} 字/秒`}
         />
       )}
@@ -234,8 +237,9 @@ export default function VoiceCalibration({ onChanged }: VoiceCalibrationProps) {
       </Space>
 
       {recording && (
-        <div style={{ marginTop: 12, fontSize: 13, color: '#1677ff' }}>
-          🎙️ 录音中…请放松、自然地读完上面的文字，读完点「完成校准」
+        <div style={{ marginTop: 12, fontSize: 13, color: '#1677ff', display: 'flex', gap: 6, alignItems: 'center' }}>
+          <AudioOutlined aria-hidden />
+          <span>录音中，请自然读完上面的文字，然后点「完成校准」</span>
         </div>
       )}
       {st.resultMsg && st.resultOk !== null && (

@@ -3,7 +3,7 @@
 ## 核心原则
 
 1. **模块化**：功能内聚，目录即模块边界，禁止跨模块 import 内部文件
-2. **类型先行**：所有共享数据结构定义在 `shared/types`，前后端共用
+2. **类型先行**：后端 API 数据结构定义在 `app/schemas`，前端接口类型定义在 `src/types`；跨端字段变更必须同步更新两端和相关测试
 3. **单一职责**：每个文件/类/函数只做一件事
 4. **最小依赖**：不引入未使用的库，能用标准库解决的不装三方包
 5. **配置外部化**：环境变量、用户配置不硬编码
@@ -17,28 +17,24 @@ src/
 ├── pages/            # 页面级组件（按路由划分）
 │   ├── Home/
 │   ├── Interview/
+│   ├── QuestionBank/
 │   ├── Report/
 │   └── Settings/
 ├── components/       # 可复用 UI 组件（跨页面通用）
 │   ├── Danmu/
 │   ├── EmotionIndicator/
-│   └── Layout/
-├── modules/          # 业务模块（封装完整业务逻辑）
-│   ├── interview/    # 面试会话管理
-│   ├── audio/        # 音频采集与处理
-│   └── realtime/     # 实时分析
+│   ├── Layout/
+│   └── VoiceCalibration/
+├── data/             # 固定演示数据
 ├── services/         # 后端 API 调用封装
-├── hooks/            # 自定义 React Hooks
-├── store/            # 全局状态（Zustand）
-├── types/            # 前端专用类型（不与后端共享的）
-├── utils/            # 工具函数
+├── hooks/            # 语音会话与语音识别等自定义 Hooks
+├── types/            # 前端接口与页面类型
 └── styles/           # 全局样式、主题变量
 ```
 
 **规则**：
-- `pages/` 只组合 `components/` 和 `modules/`，不直接写业务逻辑
-- `modules/` 每个模块独立，对外只暴露 `index.ts`
-- `components/` 必须可复用（至少被 2 处调用才算合格）
+- `pages/` 负责路由级编排；可复用交互优先抽到 `components/` 或 Hooks
+- `components/` 应具有清晰职责和可复用边界；单页专用的 UI 不必为了复用而过度抽象
 - `services/` 只负责 HTTP/WS 通信，不含业务逻辑
 
 ### 后端 (`backend/app/`)
@@ -52,22 +48,29 @@ app/
 │   ├── database.py
 │   └── exceptions.py
 ├── api/                  # HTTP 路由层
-│   ├── deps.py
 │   └── v1/
 │       ├── config.py
 │       ├── interview.py
+│       ├── profile.py
+│       ├── question_bank.py
 │       └── report.py
+│   ├── ws.py             # 训练会话 WebSocket
+│   └── voice_ws.py       # 实时语音 WebSocket
 ├── modules/              # 业务模块
 │   ├── interview/        # 面试会话
 │   │   ├── manager.py
-│   │   ├── state_machine.py
+│   │   ├── stages.py
 │   │   └── prompts.py
+│   ├── scenarios/         # 三个训练场景及共享场景协议
+│   ├── jd/               # 岗位描述获取与解析
 │   ├── resume/           # 简历解析
 │   ├── question_bank/    # 题库
+│   ├── profile/          # 本地用户档案
+│   ├── config/           # 本地 Provider 配置
 │   ├── analysis/         # 表达分析
 │   │   ├── text_rules.py
 │   │   ├── voice_features.py
-│   │   └── emotion.py
+│   │   └── summary.py
 │   └── report/           # 报告生成
 ├── providers/            # AI 能力 Adapter 层
 │   ├── base.py
@@ -80,7 +83,7 @@ app/
 ```
 
 **规则**：
-- `api/` 只做参数校验 + 调用 modules，不含业务逻辑
+- `api/` 只做参数校验、协议转换和调用 modules，不含业务逻辑
 - `modules/` 每个模块独立，对外只暴露 `__init__.py` 中声明的接口
 - `providers/` 只负责 AI 能力调用，不知道业务上下文
 - `models/` 只定义数据结构，不含行为
@@ -95,7 +98,7 @@ app/
 
 ## 类型规范
 
-- 共享类型放在 `shared/types/`，前端用 `.ts`、后端用 `.py`（通过脚本同步）
+- 后端 Pydantic schema 与前端 `src/types/` 共同构成跨端协议；修改字段时必须同步更新调用方与测试
 - 后端 Pydantic schema 与 SQLAlchemy model 分离
 - 前端 API 返回类型必须显式声明，禁止 `any`
 

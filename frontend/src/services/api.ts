@@ -5,8 +5,11 @@ import type {
   InterviewStyle,
   FetchJDOut,
   InterviewProfile,
+  InterviewModeOut,
+  InterviewIntensityOut,
   ScenarioOut,
 } from '@/types/interview'
+import type { ReportData } from '@/types/report'
 
 const BASE = '/api/v1'
 
@@ -26,6 +29,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(msg)
   }
   return res.json() as Promise<T>
+}
+
+// React 开发模式会重复执行 effect；同一报告生成中的请求应复用同一 Promise。
+const inFlightReportRequests = new Map<string, Promise<ReportData>>()
+
+function generateReportOnce(sid: string): Promise<ReportData> {
+  const existing = inFlightReportRequests.get(sid)
+  if (existing) return existing
+
+  const pending = request<ReportData>(`/reports/${sid}`, { method: 'POST' })
+  inFlightReportRequests.set(sid, pending)
+  void pending.finally(() => {
+    if (inFlightReportRequests.get(sid) === pending) {
+      inFlightReportRequests.delete(sid)
+    }
+  }).catch(() => undefined)
+  return pending
 }
 
 export const apiService = {
@@ -50,6 +70,9 @@ export const apiService = {
     position?: string
     level?: string
     style?: string
+    interview_mode?: string
+    interview_intensity?: string
+    source_session_id?: string
     company?: string
     jd_url?: string
     jd_content?: string
@@ -68,6 +91,7 @@ export const apiService = {
   getInterview: (sid: string) => request<InterviewSessionOut>(`/interviews/${sid}`),
   listInterviews: () => request<InterviewSessionOut[]>('/interviews'),
   listStyles: () => request<{ styles: InterviewStyle[] }>('/interviews/styles'),
+  listInterviewModes: () => request<{ modes: InterviewModeOut[]; intensities: InterviewIntensityOut[] }>('/interviews/modes'),
   fetchJD: (url: string) =>
     request<FetchJDOut>('/interviews/jd/fetch', {
       method: 'POST',
@@ -113,8 +137,10 @@ export const apiService = {
   endInterview: (sid: string) =>
     request<InterviewSessionOut>(`/interviews/${sid}/end`, { method: 'POST' }),
   getDialogues: (sid: string) => request<DialogueOut[]>(`/interviews/${sid}/dialogues`),
-  generateReport: (sid: string) =>
-    request<any>(`/reports/${sid}`, { method: 'POST' }),
+  getReport: (sid: string) => request<ReportData>(`/reports/${sid}`),
+  generateReport: generateReportOnce,
+  regenerateReport: (sid: string) =>
+    request<ReportData>(`/reports/${sid}/regenerate`, { method: 'POST' }),
 
   // 面试档案
   listProfiles: () => request<InterviewProfile[]>('/profiles'),

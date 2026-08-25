@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
+from app.core.local_access import accept_trusted_websocket
 from app.modules import interview
-from app.modules.analysis import analyze_emotion, analyze_text
+from app.modules.analysis import analyze_emotion, analyze_text, detect_semantic_repetition
 from app.modules.config import load_provider_config
 from app.modules.interview.ws_protocol import (
     ClientMessage,
@@ -19,6 +21,7 @@ from app.modules.interview.ws_protocol import (
     envelope,
 )
 from app.providers import get_tts
+from app.modules.scenarios import get_pack
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -26,7 +29,8 @@ router = APIRouter()
 
 @router.websocket("/interview/{sid}")
 async def interview_ws(websocket: WebSocket, sid: str):
-    await websocket.accept()
+    if not await accept_trusted_websocket(websocket):
+        return
     logger.info("WebSocket connected: sid=%s", sid)
 
     session_factory = await get_db_session()
@@ -69,7 +73,11 @@ async def _handle_start_stage(websocket: WebSocket, db: AsyncSession, sid: str) 
         if await interview.should_advance(db, sid):
             session = await interview.advance_stage(db, sid)
             await websocket.send_text(
-                envelope(ServerMsgType.STAGE_CHANGED, stage=session.current_stage)
+                envelope(
+                    ServerMsgType.STAGE_CHANGED,
+                    stage=session.current_stage,
+                    progress=await interview.get_interview_progress(db, sid),
+                )
             )
             if session.status == "completed":
                 await websocket.send_text(envelope(ServerMsgType.INTERVIEW_COMPLETED))
@@ -77,8 +85,15 @@ async def _handle_start_stage(websocket: WebSocket, db: AsyncSession, sid: str) 
 
         text = await interview.generate_next(db, sid)
         session = await interview.get_session(db, sid)
+        delivery = "voice" if get_pack(session.scenario).key == "interview" else "text"
         await websocket.send_text(
-            envelope(ServerMsgType.AI_QUESTION, stage=session.current_stage, text=text)
+            envelope(
+                ServerMsgType.AI_QUESTION,
+                stage=session.current_stage,
+                text=text,
+                delivery=delivery,
+                progress=await interview.get_interview_progress(db, sid),
+            )
         )
     except Exception as e:
         logger.exception("生成问题失败")
@@ -97,12 +112,26 @@ async def _handle_user_answer(
     text_res = analyze_text(text)
     from app.modules.analysis.emotion import analyze_emotion
     emotion = analyze_emotion(text_res, None)
+    semantic_repetitions: list[dict] = []
+    history: list[str] = []
+    for sentence in re.split(r"(?<=[。！？!?；;\n])", text):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        match = detect_semantic_repetition(sentence, history)
+        if match:
+            semantic_repetitions.append(match)
+        history.append(sentence)
 
     analysis_payload = {
         "text": text,
         "warning_level": text_res.warning_level,
         "filler_hits": text_res.filler_hits,
+        "hedge_hits": text_res.hedge_hits,
+        "uncertain_hits": text_res.uncertain_hits,
         "repeated_words": text_res.repeated_words,
+        "consecutive_repetition_hits": text_res.consecutive_repetition_hits,
+        "semantic_repetitions": semantic_repetitions,
         "repetition_rate": text_res.repetition_rate,
         "tension_score": emotion.tension_score,
         "tension_level": emotion.tension_level,
@@ -155,21 +184,6 @@ async def _handle_end(websocket: WebSocket, db: AsyncSession, sid: str) -> None:
         row.current_stage = "report"
         await db.commit()
     await websocket.send_text(envelope(ServerMsgType.INTERVIEW_COMPLETED))
-
-
-async def _handle_tts(websocket: WebSocket, db: AsyncSession, text: str) -> None:
-    if not text.strip():
-        return
-    try:
-        cfg = await load_provider_config(db, "tts")
-        provider = get_tts(cfg)
-        audio = await provider.synthesize(text)
-        await websocket.send_text(
-            envelope(ServerMsgType.TTS_AUDIO, audio=encode_audio(audio), format="mp3")
-        )
-    except Exception as e:
-        logger.exception("TTS 失败")
-        await websocket.send_text(envelope(ServerMsgType.ERROR, message=f"TTS 失败：{e}"))
 
 
 async def _handle_tts(websocket: WebSocket, db: AsyncSession, text: str) -> None:

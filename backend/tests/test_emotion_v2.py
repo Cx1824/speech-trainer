@@ -1,4 +1,4 @@
-"""情绪判定 2.0 单测：去趋势 jitter / 连续打分 / 基线 / 平滑 / 校准聚合。"""
+"""表达信号代理值单测：去趋势 jitter / 连续打分 / 基线 / 平滑 / 校准聚合。"""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def _synth_pcm(f0_curve, sr=SAMPLE_RATE, dur=None) -> bytes:
 
 class TestDetrendedJitter:
     def test_pure_slow_intonation_low_jitter(self):
-        """慢速语调（大幅起伏但变化 <2Hz）→ jitter 应很小（不误判紧张）。"""
+        """慢速语调（大幅起伏但变化 <2Hz）不应形成高 jitter。"""
         n = 160  # 4s，160 帧
         times = np.arange(n) * 0.025
         # 基频 150→220→150Hz 慢速漂移（一个完整语调弧线，周期 2s = 0.5Hz）
@@ -51,7 +51,7 @@ class TestDetrendedJitter:
         assert j < 0.02, f"慢速语调 jitter={j} 应 < 0.02"
 
     def test_fast_tremor_high_jitter(self):
-        """8Hz 快速颤动（真紧张的生理特征）→ jitter 显著。"""
+        """人工注入 8Hz 快速频率调制时，jitter 应显著升高。"""
         n = 160
         times = np.arange(n) * 0.025
         f0 = 185 + 15 * np.sin(2 * np.pi * 8.0 * times)
@@ -77,7 +77,7 @@ class TestComputeTensionV2:
         return f
 
     def test_at_baseline_low_score(self):
-        """全部信号贴合个人基线 → 低分（<40 平稳）。"""
+        """全部信号贴合个人基线时，表达波动代理值较低。"""
         bl = VoiceBaseline(pitch_jitter=0.02, speech_rate=4.2, pause_rate=3.0, sample_sec=30)
         f = self._feats(pitch_jitter=0.02, pause_count=1, energy_mean=1.0, energy_std=0.7)
         score, detail = compute_tension_v2(f, bl, speech_rate=4.2)
@@ -85,12 +85,12 @@ class TestComputeTensionV2:
         assert detail["jitter"] == 0
 
     def test_tremor_way_above_baseline_high_score(self):
-        """颤抖 3 倍于基线 → jitter 贡献满分 35。"""
+        """颤抖远超基线（3 倍+）→ jitter 贡献满分 30（v2.1 权重）。"""
         bl = VoiceBaseline(pitch_jitter=0.02, sample_sec=30)
         f = self._feats(pitch_jitter=0.06, energy_mean=1.0, energy_std=0.7)
         score, detail = compute_tension_v2(f, bl)
-        assert detail["jitter"] == 35.0
-        assert score >= 60
+        assert detail["jitter"] == 30.0
+        assert score >= 55
 
     def test_speech_rate_spike(self):
         """语速飙升（1.6 倍基线）→ 语速贡献满分 25。"""
@@ -100,21 +100,22 @@ class TestComputeTensionV2:
         assert detail["speech_rate"] == 25.0
 
     def test_speech_rate_slow_mild(self):
-        """语速过慢 → 轻度贡献（上限 18，弱于过快）。"""
+        """语速过慢 → 轻度贡献（上限 10，弱于过快）。"""
         bl = VoiceBaseline(speech_rate=4.5, sample_sec=30)
         f = self._feats(energy_mean=1.0, energy_std=0.5)
         score, detail = compute_tension_v2(f, bl, speech_rate=2.2)
-        assert 0 < detail["speech_rate"] <= 18.0
+        assert 0 < detail["speech_rate"] <= 10.0
 
     def test_short_utterance_skips_pause(self):
-        """<3s 短句不评停顿（防误判）。"""
+        """<3s 短句不评停顿/犹豫（防误判）。"""
         bl = VoiceBaseline(pause_rate=3.0, sample_sec=30)
         f = self._feats(duration_sec=2.0, pitch_jitter=0.01, pause_count=0, energy_mean=1.0, energy_std=0.5)
         _, detail = compute_tension_v2(f, bl)
         assert "pause" not in detail
+        assert "hesitation" not in detail
 
     def test_default_baseline_fallback(self):
-        """无基线（None）→ 用人群默认值，不抛异常。"""
+        """无个人基线时使用算法参考值且不抛异常。"""
         f = self._feats(pitch_jitter=DEFAULT_BASELINE["pitch_jitter"], energy_mean=1.0, energy_std=0.5)
         score, _ = compute_tension_v2(f, None)
         assert 0 <= score <= 100
@@ -179,8 +180,8 @@ class TestBuildBaseline:
 
 
 class TestEndToEndEmotion:
-    def test_steady_voice_with_intonation_not_tense(self):
-        """端到端：有语调起伏但平稳的嗓音 → 不判紧张（回归 1.0 的误判）。"""
+    def test_steady_voice_with_intonation_stays_near_baseline(self):
+        """端到端：慢速语调变化不应被当作快速波动。"""
         # 6s 语音，基频 160→200→160 慢速弧线（有感情朗读）
         pcm = _synth_pcm([(0, 160), (3, 200), (6, 160)], dur=6.0)
         buf = PcmFeatureBuffer()
@@ -193,11 +194,11 @@ class TestEndToEndEmotion:
             speech_rate=4.2, pause_rate=3.0, sample_sec=30,
         )
         snap = analyze_emotion(text_res, feats, baseline=bl, speech_rate=4.0)
-        assert snap.tension_score < 40, f"平稳朗读被判紧张：{snap.tension_score}"
+        assert snap.tension_score < 40, f"贴近基线的朗读波动值过高：{snap.tension_score}"
         assert snap.calibrated
 
-    def test_tremor_voice_tense(self):
-        """端到端：8Hz 颤动嗓音 → 判紧张。"""
+    def test_fast_frequency_modulation_raises_deviation_score(self):
+        """端到端：人工注入 8Hz 频率调制时，波动代理值升高。"""
         # 用正弦调制模拟快速颤动
         ts = np.arange(int(SAMPLE_RATE * 6)) / SAMPLE_RATE
         f0 = 180 + 20 * np.sin(2 * np.pi * 8 * ts)  # 8Hz 颤动
@@ -214,7 +215,7 @@ class TestEndToEndEmotion:
         bl = VoiceBaseline(pitch_jitter=0.02, sample_sec=30)  # 基线 0.02
         text_res = analyze_text("我负责这个项目。")
         snap = analyze_emotion(text_res, feats, baseline=bl)
-        assert snap.tension_score >= 55, f"颤动嗓音未检出紧张：{snap.tension_score} jitter={feats.pitch_jitter}"
+        assert snap.tension_score >= 55, f"快速调制未提高代理值：{snap.tension_score} jitter={feats.pitch_jitter}"
         assert "jitter" in snap.factors
 
     def test_calibration_text_reasonable(self):

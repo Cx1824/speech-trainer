@@ -1,18 +1,25 @@
-import { Button, Card, Col, Row, Tag, Typography } from 'antd'
-import { SoundOutlined, DownOutlined, UpOutlined } from '@ant-design/icons'
+import { Button } from 'antd'
+import {
+  AimOutlined,
+  AudioOutlined,
+  BarChartOutlined,
+  DownOutlined,
+  FileTextOutlined,
+  SoundOutlined,
+  UpOutlined,
+} from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { apiService } from '@/services/api'
 import type { ScenarioOut } from '@/types/interview'
 import VoiceCalibration from '@/components/VoiceCalibration'
-
-const { Title, Paragraph, Text } = Typography
+import './Home.css'
 
 /** 场景卡片图标与主色（静态配置，与后端 scenario key 对齐）。 */
-const CARD_META: Record<string, { icon: string; color: string }> = {
-  interview: { icon: '🎯', color: '#1677ff' },
-  presentation: { icon: '📊', color: '#722ed1' },
-  speech: { icon: '🎤', color: '#13c2c2' },
+const CARD_META: Record<string, { icon: ReactNode; color: string }> = {
+  interview: { icon: <AimOutlined />, color: '#1677ff' },
+  presentation: { icon: <BarChartOutlined />, color: '#722ed1' },
+  speech: { icon: <AudioOutlined />, color: '#13c2c2' },
 }
 
 export default function Home() {
@@ -20,6 +27,11 @@ export default function Home() {
   const [scenarios, setScenarios] = useState<ScenarioOut[]>([])
   const [calibrated, setCalibrated] = useState<boolean | null>(null)  // null=查询中
   const [calibOpen, setCalibOpen] = useState(false)                   // 校准卡片展开
+
+  useEffect(() => {
+    document.body.classList.add('is-home-showcase')
+    return () => document.body.classList.remove('is-home-showcase')
+  }, [])
 
   useEffect(() => {
     apiService
@@ -41,89 +53,80 @@ export default function Home() {
   }, [])
 
   return (
-    <div style={{ maxWidth: 1080, margin: '0 auto' }}>
-      <Title level={2}>表达能力训练平台</Title>
-      <Paragraph type="secondary">
-        实时语音转写 + 表达多维分析 + 场景化专业报告。收音、实时反馈、报告核心链路三场景共用，仅训练侧重不同。
-      </Paragraph>
+    <main className="home-showcase">
+      <header className="home-showcase-header">
+        <button type="button" className="home-brand" onClick={() => nav('/')}>表达能力训练器</button>
+        <div className="home-header-actions">
+          <button type="button" onClick={() => nav('/report/demo')}><FileTextOutlined /> 示例报告</button>
+          <button type="button" onClick={() => nav('/settings')}>设置</button>
+        </div>
+      </header>
 
-      {/* 声音校准引导：未校准时醒目提示；已校准提供管理入口 */}
-      {calibrated === false && (
-        <Card
-          size="small"
-          style={{ marginBottom: 16, borderColor: '#1677ff', background: '#f0f7ff' }}
-          styles={{ body: { padding: '12px 16px' } }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <SoundOutlined style={{ fontSize: 20, color: '#1677ff' }} />
-            <div style={{ flex: 1, minWidth: 260 }}>
-              <Text strong>先花 30 秒做个声音校准</Text>
-              <div style={{ fontSize: 13, color: '#666' }}>
-                朗读一小段文字，系统会记住你的语速、音调与停顿习惯——之后训练中的「紧张度」按你自己的基准评估，准得多。换人使用时重新校准即可。
-              </div>
-            </div>
-            <Button type="primary" onClick={() => setCalibOpen(true)}>
-              开始校准
-            </Button>
+      <section className="home-hero" aria-labelledby="home-hero-title">
+        <div className="home-hero-orbit home-hero-orbit-top" aria-hidden="true" />
+        <p className="home-kicker">REAL-TIME SPEECH COACH / 03 CORE SIGNALS</p>
+        <h1 id="home-hero-title">让每一句话<br /><span>都有分量。</span></h1>
+        <p className="home-hero-copy">把口癖、重复和节奏变成看得见的即时反馈。先听见自己，再让观点真正被记住。</p>
+        <div className="home-signal-preview" aria-label="实时表达反馈能力">
+          <span><i className="is-coral" />口癖 <b>更干净</b></span>
+          <span><i className="is-lime" />重复 <b>更精准</b></span>
+          <span><i className="is-blue" />节奏 <b>更有力</b></span>
+        </div>
+        <div className="home-hero-orbit home-hero-orbit-bottom" aria-hidden="true" />
+      </section>
+
+      <section className="home-scenario-section" aria-labelledby="scenario-title">
+        <div className="home-section-heading">
+          <div>
+            <p>CHOOSE YOUR STAGE</p>
+            <h2 id="scenario-title">选择一个真实场景，开始表达。</h2>
           </div>
-        </Card>
+          <span>实时字幕 · 核心提示 · 复盘报告</span>
+        </div>
+
+        <div className="home-scenario-grid">
+          {scenarios.map((s, index) => {
+            const meta = CARD_META[s.key] ?? { icon: <SoundOutlined />, color: '#8dbaff' }
+            return (
+              <button
+                type="button"
+                className="home-scenario-card"
+                key={s.key}
+                onClick={() => nav(`/training?scenario=${s.key}`)}
+              >
+                <span className="home-scenario-index">0{index + 1}</span>
+                <span className="home-scenario-icon" style={{ color: meta.color }} aria-hidden="true">{meta.icon}</span>
+                <strong>{s.name}</strong>
+                <span className="home-scenario-description">{s.description}</span>
+                <span className="home-scenario-meta">AI {s.role_name}{s.timed ? ' · 限时训练' : ' · 实时追问'}</span>
+                <span className="home-scenario-enter">进入训练 <b>→</b></span>
+              </button>
+            )
+          })}
+        </div>
+      </section>
+
+      {calibrated !== true && (
+        <section className="home-calibration" aria-label="声音校准">
+          <div><SoundOutlined aria-hidden="true" /><span><b>30 秒声音校准</b>建立你的个人语速与停顿基线，只比较你的变化。</span></div>
+          <Button type="primary" onClick={() => setCalibOpen(true)}>开始校准</Button>
+        </section>
       )}
       {calibrated === true && (
-        <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
-          <Button
-            size="small"
-            type="text"
-            icon={<SoundOutlined />}
-            onClick={() => setCalibOpen((v) => !v)}
-          >
-            声音校准（已就绪）{calibOpen ? <UpOutlined /> : <DownOutlined />}
-          </Button>
-        </div>
+        <button type="button" className="home-calibration-ready" onClick={() => setCalibOpen((v) => !v)}>
+          <SoundOutlined /> 声音校准已就绪 {calibOpen ? <UpOutlined /> : <DownOutlined />}
+        </button>
       )}
       {calibOpen && (
-        <VoiceCalibration
-          onChanged={(ok) => {
-            setCalibrated(ok)
-            if (ok) setCalibOpen(false)  // 校准成功收起卡片，回到引导收起态
-          }}
-        />
+        <div className="home-calibration-panel">
+          <VoiceCalibration
+            onChanged={(ok) => {
+              setCalibrated(ok)
+              if (ok) setCalibOpen(false)
+            }}
+          />
+        </div>
       )}
-
-      <Row gutter={[16, 16]}>
-        {scenarios.map((s) => {
-          const meta = CARD_META[s.key] ?? { icon: '⭐', color: '#595959' }
-          return (
-            <Col xs={24} sm={12} md={8} key={s.key}>
-              <Card
-                hoverable
-                style={{ height: '100%', borderTop: `3px solid ${meta.color}` }}
-                onClick={() => nav(`/interview?scenario=${s.key}`)}
-              >
-                <div style={{ fontSize: 32, marginBottom: 8 }}>{meta.icon}</div>
-                <Title level={4} style={{ marginBottom: 4 }}>
-                  {s.name}
-                </Title>
-                <Paragraph type="secondary" style={{ minHeight: 44 }}>
-                  {s.description}
-                </Paragraph>
-                <div style={{ marginBottom: 12 }}>
-                  <Tag color={meta.color}>AI{s.role_name}</Tag>
-                  {s.timed && <Tag color="orange">限时+计时</Tag>}
-                  {s.needs_material && <Tag>可传材料</Tag>}
-                  {s.needs_resume && <Tag>简历</Tag>}
-                </div>
-                <Button type="primary" block onClick={() => nav(`/interview?scenario=${s.key}`)}>
-                  开始训练
-                </Button>
-              </Card>
-            </Col>
-          )
-        })}
-      </Row>
-
-      <Paragraph type="secondary" style={{ marginTop: 24 }}>
-        <Text type="secondary">训练记录可在对应场景的报告页查看历史会话。</Text>
-      </Paragraph>
-    </div>
+    </main>
   )
 }

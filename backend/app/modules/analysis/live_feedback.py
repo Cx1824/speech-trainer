@@ -42,8 +42,11 @@ def _repeat_pattern():
 class LiveFeedbackEngine:
     """会话级实时反馈状态机（每个语音会话一个实例）。"""
 
-    def __init__(self) -> None:
+    def __init__(self, *, enable_partial_repeat: bool = True) -> None:
         self._last_fire: dict[str, float] = {}       # key → monotonic 时间
+        # 生产语音通道关闭 partial 连读强提醒，避免 ASR partial 重写把
+        # 临时中间结果误报成口吃；单测/旧调用方可显式保留兼容行为。
+        self._enable_partial_repeat = enable_partial_repeat
         self._partial_chars_seen = 0                  # 当前 partial 累计已扫描字符数
         self._last_partial_text = ""
         # 超长句跟踪：当前未断句的字符数（partial 文本长度即当前句累积）
@@ -109,15 +112,18 @@ class LiveFeedbackEngine:
                         "advice": f"「{word}」显得不确定，试着给明确结论",
                     })
 
-            # ② 连读重复（"就是就是"）
-            for m in _repeat_pattern().finditer(new_part):
-                word = m.group(1)
-                if self._can_fire(f"repeat:{word}", COOLDOWN["repeat"]):
-                    feedbacks.append({
-                        "kind": "repeat",
-                        "word": word,
-                        "advice": f"「{word}{word}」连说了，说一遍就够",
-                    })
+            # ② 连读重复（"就是就是"）。生产通道改由 final 分析中的
+            # consecutive_repetition_hits 提供强信号；此处仅保留旧调用方
+            # 的可选兼容路径。
+            if self._enable_partial_repeat:
+                for m in _repeat_pattern().finditer(new_part):
+                    word = m.group(1)
+                    if self._can_fire(f"repeat:{word}", COOLDOWN["repeat"]):
+                        feedbacks.append({
+                            "kind": "repeat",
+                            "word": word,
+                            "advice": f"「{word}{word}」连说了，说一遍就够",
+                        })
 
             # ③ 超长未断句
             if (

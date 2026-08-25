@@ -30,12 +30,15 @@ class Settings(BaseSettings):
 
     # 应用
     app_env: str = Field(default="development")
-    app_host: str = Field(default="0.0.0.0")
+    app_host: str = Field(default="127.0.0.1")
     app_port: int = Field(default=8000)
     app_log_level: str = Field(default="INFO")
 
     # CORS
-    cors_origins: str = Field(default="http://localhost:5178")
+    cors_origins: str = Field(
+        default="http://localhost:5178,http://127.0.0.1:5178,http://localhost:5179,http://127.0.0.1:5179"
+    )
+    allowed_hosts: str = Field(default="localhost,127.0.0.1,[::1]")
 
     # 数据（默认绝对路径，避免受启动目录影响）
     database_url: str = Field(
@@ -43,20 +46,25 @@ class Settings(BaseSettings):
     )
     upload_dir: str = Field(default=str(BACKEND_DIR / "uploads"))
     report_dir: str = Field(default=str(BACKEND_DIR / "output"))
+    # 生产测试包可由 FastAPI 直接托管已构建前端，避免 Windows 运行时依赖 Node.js。
+    # 留空时保持开发模式现状，由 Vite 单独提供前端。
+    frontend_dist_dir: str = Field(default="")
 
     # LLM
-    llm_provider: str = Field(default="custom")
-    llm_base_url: str = Field(default="")
+    llm_provider: str = Field(default="deepseek")
+    llm_base_url: str = Field(default="https://api.deepseek.com")
     llm_api_key: str = Field(default="")
-    llm_model: str = Field(default="")
+    llm_model: str = Field(default="deepseek-v4-pro")
     llm_temperature: float = Field(default=0.7)
 
     # ASR
-    asr_provider: str = Field(default="custom")
+    asr_provider: str = Field(default="sherpa_onnx")
     asr_base_url: str = Field(default="")
     asr_api_key: str = Field(default="")
     asr_api_secret: str = Field(default="")
-    asr_model: str = Field(default="")
+    asr_model: str = Field(
+        default="sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30"
+    )
 
     # TTS
     tts_provider: str = Field(default="custom")
@@ -76,8 +84,22 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
+    def allowed_host_list(self) -> List[str]:
+        return [host.strip() for host in self.allowed_hosts.split(",") if host.strip()]
+
+    @property
     def is_dev(self) -> bool:
         return self.app_env == "development"
+
+    @property
+    def frontend_dist_path(self) -> Path | None:
+        raw = self.frontend_dist_dir.strip()
+        if not raw:
+            return None
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = BACKEND_DIR / path
+        return path.resolve()
 
     def ensure_dirs(self) -> None:
         """确保运行时目录存在。"""

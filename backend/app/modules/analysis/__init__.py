@@ -6,10 +6,15 @@ from app.modules.analysis.emotion import (
     analyze_emotion,
 )
 from app.modules.analysis.pcm_features import CALIBRATION_TEXT, PcmFeatureBuffer, build_baseline
+from app.modules.analysis.summary import aggregate_sentence_analyses
 from app.modules.analysis.text_rules import (
     AnalysisResult,
     analyze_text,
     compute_speech_rate,
+    detect_consecutive_repetitions,
+    detect_expression_breaks,
+    detect_semantic_repetition,
+    detect_semantic_repetitions,
     rate_speech_rate,
 )
 from app.modules.analysis.voice_features import (
@@ -25,6 +30,10 @@ __all__ = [
     "analyze_text",
     "compute_speech_rate",
     "rate_speech_rate",
+    "detect_consecutive_repetitions",
+    "detect_expression_breaks",
+    "detect_semantic_repetition",
+    "detect_semantic_repetitions",
     "extract_features",
     "compute_tension",
     "compute_tension_v2",
@@ -38,4 +47,5 @@ __all__ = [
     "PcmFeatureBuffer",
     "CALIBRATION_TEXT",
     "build_baseline",
+    "aggregate_sentence_analyses",
 ]

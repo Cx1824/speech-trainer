@@ -68,43 +68,52 @@ class PcmFeatureBuffer:
         feats.energy_mean = float(np.mean(energy))
         feats.energy_std = float(np.std(energy))
 
-        # ---- 停顿（能量阈值：低于峰值 5%，且 >0.5s 视为停顿）----
+        # ---- 停顿（对数能量自适应阈值）----
+        # 两类语义不同：≥0.5s 是"换气/思考"的长停顿（中性，从容朗读也有）；
+        # 0.2-0.5s 是短停顿，可用于观察说话连贯性；它不等于紧张感。
+        # 旧版只统计长停顿且 U 形打分方向反了（慢速从容停顿多被重罚）。
         if len(energy) > 0 and np.max(energy) > 0:
-            silent = energy < np.max(energy) * 0.05
-            min_frames = int(0.5 * 1000 / FRAME_MS)  # 20 帧 = 0.5s
-            pauses: list[int] = []
-            cur = 0
-            for s in silent:
-                if s:
-                    cur += 1
-                elif cur > 0:
-                    pauses.append(cur)
-                    cur = 0
-            if cur > 0:
-                pauses.append(cur)
-            valid = [p for p in pauses if p >= min_frames]
-            feats.pause_count = len(valid)
-            if valid:
-                feats.avg_pause_duration = float(np.mean(valid) * FRAME_MS / 1000)
+            silent = _energy_silence_mask(energy)
+            long_frames = int(0.5 * 1000 / FRAME_MS)   # 20 帧 = 0.5s
+            hes_frames = int(0.2 * 1000 / FRAME_MS)    # 8 帧 = 0.2s
+            # 只统计正文内部静音。真人网络音频盲听确认：录音开始前和
+            # 结束后的等待不是表达停顿；旧实现把每条音频边界稳定多报 2 次。
+            pauses = [
+                end - start
+                for start, end in _silence_runs(silent)
+                if start > 0 and end < len(silent)
+            ]
+            long_p = [p for p in pauses if p >= long_frames]
+            feats.pause_count = len(long_p)
+            feats.hesitation_count = sum(
+                1 for p in pauses if hes_frames <= p < long_frames
+            )
+            if long_p:
+                feats.avg_pause_duration = float(np.mean(long_p) * FRAME_MS / 1000)
 
         # ---- 基频（自相关法，逐帧，对浊音帧估计）----
         try:
             f0s, times = _estimate_f0_per_frame(frames, sr)
+            # 声学语速代理：浊音帧占比（发音密度）。文字语速（字/秒）依赖
+            # ASR 定稿，离线评测/低质量 ASR 时缺席；voiced_ratio 捕捉
+            # "同样的话说得急=语音占比高"（合成集 +50% 语速：0.78→0.92 单调）。
+            voiced_n = int(np.sum(energy >= np.max(energy) * 0.10)) if len(energy) else 0
+            feats.voiced_ratio = voiced_n / len(frames) if len(frames) else 0.0
             if len(f0s) > 0:
-                arr = np.array(f0s)
+                arr = _track_f0(f0s)
                 feats.pitch_mean = float(np.mean(arr))
                 feats.pitch_std = float(np.std(arr))
                 if len(arr) > 1:
-                    # 情绪 2.0：先去趋势（滤掉慢速语调起伏），只留快速颤动算 jitter。
-                    # 直接 diff 会把抑扬顿挫（正常重音/语调）误判为紧张。
-                    feats.pitch_jitter = _detrended_jitter(arr, times)
+                    # 先去趋势（滤掉慢速语调起伏），只留快速音高波动。
+                    # 直接 diff 会把抑扬顿挫（正常重音/语调）混入实验值。
+                    feats.pitch_jitter = _detrended_jitter(arr, times[: len(arr)])
         except Exception as e:
             logger.debug("基频估计失败：%s", e)
 
         return feats
 
     def tension(self) -> tuple[float, VoiceFeatures | None]:
-        """flush 并计算紧张度。音频不足时返回 (0, None) 表示无语音信号。"""
+        """兼容旧调用：flush 并返回历史代理值；不足时返回 ``(0, None)``。"""
         feats = self.flush()
         if feats.duration_sec <= 0:
             return 0.0, None
@@ -112,16 +121,16 @@ class PcmFeatureBuffer:
 
 
 class LivePcmTracker:
-    """实时声学追踪（情绪/语速实时化用）。
+    """实时声学与语速追踪。
 
     与 PcmFeatureBuffer（句子级整段计算）不同，本类做增量处理：
     - push() 逐帧计算能量 + 浊音帧基频，结果存入定长环形缓冲（默认 8s）
-    - snapshot(window_sec) 取最近 N 秒窗口聚合 → VoiceFeatures（实时紧张度用）
+    - snapshot(window_sec) 取最近 N 秒窗口聚合 → VoiceFeatures
     - 说话秒/静音秒累积（实时语速 = 字数 ÷ 发音时长，而非音频总时长）
     - 全程 O(帧)，单帧 25ms 计算微秒级
 
     注意：不负责清空——句子定稿后由调用方 reset_speech_stats() 清语速统计，
-    声学环形缓冲保留（跨句连续观察紧张度）。
+    声学环形缓冲保留（跨句连续观察可测声音事实）。
     """
 
     def __init__(self, window_sec: float = 8.0, sample_rate: int = SAMPLE_RATE) -> None:
@@ -226,7 +235,7 @@ class LivePcmTracker:
         return self._n * FRAME_MS / 1000.0 - self._speech_run_start
 
     def snapshot(self, window_sec: float = 5.0) -> VoiceFeatures:
-        """取最近 window_sec 秒窗口聚合特征（实时紧张度用）。
+        """取最近 window_sec 秒窗口聚合特征。
 
         不足窗口时用全部已有数据；完全无数据返回空特征。
         """
@@ -247,26 +256,26 @@ class LivePcmTracker:
         feats.duration_sec = n_win * FRAME_MS / 1000.0
         feats.energy_mean = float(np.mean(energies))
         feats.energy_std = float(np.std(energies))
-        # 窗口内停顿（复用同款阈值逻辑）
+        # 窗口内停顿（复用同款阈值逻辑 + 犹豫停顿二分）
         if feats.energy_mean > 0:
-            silent = energies < np.max(energies) * 0.05
-            min_frames = int(0.5 * 1000 / FRAME_MS)
-            cur = 0
-            pauses = []
-            for s in silent:
-                if s:
-                    cur += 1
-                elif cur > 0:
-                    pauses.append(cur)
-                    cur = 0
-            if cur > 0:
-                pauses.append(cur)
-            valid = [p for p in pauses if p >= min_frames]
-            feats.pause_count = len(valid)
-            if valid:
-                feats.avg_pause_duration = float(np.mean(valid) * FRAME_MS / 1000)
+            silent = _energy_silence_mask(energies)
+            long_frames = int(0.5 * 1000 / FRAME_MS)
+            hes_frames = int(0.2 * 1000 / FRAME_MS)
+            # 窗口两端的静音段尚未闭合，不能作为一次完整停顿计数。
+            pauses = [
+                end - start
+                for start, end in _silence_runs(silent)
+                if start > 0 and end < len(silent)
+            ]
+            long_p = [p for p in pauses if p >= long_frames]
+            feats.pause_count = len(long_p)
+            feats.hesitation_count = sum(
+                1 for p in pauses if hes_frames <= p < long_frames
+            )
+            if long_p:
+                feats.avg_pause_duration = float(np.mean(long_p) * FRAME_MS / 1000)
         # 基频（去趋势 jitter，与整段版一致）
-        voiced = f0s[f0s > 0]
+        voiced = _track_f0(list(f0s[f0s > 0]))
         if len(voiced) >= 4:
             feats.pitch_mean = float(np.mean(voiced))
             feats.pitch_std = float(np.std(voiced))
@@ -274,6 +283,9 @@ class LivePcmTracker:
         elif len(voiced) > 1:
             feats.pitch_mean = float(np.mean(voiced))
             feats.pitch_jitter = float(np.mean(np.abs(np.diff(voiced))) / (feats.pitch_mean + 1e-6))
+        # 发音密度（窗口版）：能量 ≥ 峰值 10% 的帧占比
+        if len(energies):
+            feats.voiced_ratio = float(np.sum(energies >= np.max(energies) * 0.10)) / len(energies)
         return feats
 
     def reset_speech_stats(self) -> None:
@@ -328,6 +340,7 @@ def build_baseline(
     jitters = [f.pitch_jitter for f in feats_list if f.pitch_jitter > 0]
     pitches = [f.pitch_mean for f in feats_list if f.pitch_mean > 0]
     pauses = sum(f.pause_count for f in feats_list)
+    hesitations = sum(f.hesitation_count for f in feats_list)
 
     if jitters:
         bl.pitch_jitter = float(sum(jitters) / len(jitters))
@@ -336,15 +349,15 @@ def build_baseline(
     if char_count > 0:
         bl.speech_rate = char_count / total_sec
     bl.pause_rate = pauses / total_sec * 60
+    bl.hesitation_rate = hesitations / total_sec * 60
     bl.sample_sec = total_sec
     return bl
 
 
 def _detrended_jitter(f0: "np.ndarray", times: "np.ndarray") -> float:
-    """去趋势 jitter：分离慢速语调曲线与快速生理性颤动。
+    """去趋势 jitter：分离慢速语调曲线与快速频率变化。
 
-    原理：真紧张的声带颤动是 8-12Hz 快速振荡（帧间隔 25ms 足以采样），
-    而语调抑扬是 <4Hz 的慢速漂移。用滑动中值滤波拟合语调基线，
+    语调抑扬通常表现为较慢漂移；用滑动中值滤波拟合局部语调基线，
     残差的平均绝对偏差 / 均值 = 快速 jitter。
     """
     import numpy as np
@@ -365,6 +378,97 @@ def _detrended_jitter(f0: "np.ndarray", times: "np.ndarray") -> float:
 
     resid = f0 - trend
     return float(np.mean(np.abs(resid)) / (np.mean(f0) + 1e-6))
+
+
+def _silence_runs(silent) -> list[tuple[int, int]]:
+    """返回连续静音区间 ``[start, end)``，保留边界供调用方判断。"""
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for index, is_silent in enumerate(silent):
+        if is_silent and start is None:
+            start = index
+        elif not is_silent and start is not None:
+            runs.append((start, index))
+            start = None
+    if start is not None:
+        runs.append((start, len(silent)))
+    return runs
+
+
+def _energy_silence_mask(energy) -> "np.ndarray":
+    """用对数能量的 Otsu 分割区分语音与背景底噪。
+
+    固定使用峰值百分比时，持续背景噪声会填满真实停顿，而偶发高峰又会把
+    低音量发音误判为静音。Otsu 在当前片段的对数能量分布上寻找类间方差
+    最大的切分点，不依赖绝对录音响度，也不需要针对某个口音设置规则。
+
+    能量近似恒定时不存在可分的两类，除全零音频外按非静音处理，避免把
+    平稳持续发声机械地切成停顿。
+    """
+    import numpy as np
+
+    values = np.asarray(energy, dtype=np.float64)
+    if not len(values):
+        return np.zeros(0, dtype=bool)
+
+    peak = float(np.max(values))
+    if peak <= 1e-12:
+        return np.ones(len(values), dtype=bool)
+
+    log_energy = 10.0 * np.log10(np.maximum(values, peak * 1e-8))
+    if float(np.ptp(log_energy)) < 6.0:
+        return np.zeros(len(values), dtype=bool)
+
+    hist, edges = np.histogram(log_energy, bins=min(128, max(16, len(values))))
+    centers = (edges[:-1] + edges[1:]) / 2.0
+    weights = hist.astype(np.float64)
+    cumulative_weight = np.cumsum(weights)
+    cumulative_mean = np.cumsum(weights * centers)
+    total_weight = cumulative_weight[-1]
+    total_mean = cumulative_mean[-1]
+    denominator = cumulative_weight * (total_weight - cumulative_weight)
+    between_class = np.zeros_like(denominator)
+    valid = denominator > 0
+    between_class[valid] = (
+        total_mean * cumulative_weight[valid]
+        - cumulative_mean[valid] * total_weight
+    ) ** 2 / denominator[valid]
+    threshold = centers[int(np.argmax(between_class))]
+    return log_energy < threshold
+
+
+def _track_f0(f0s: list[float]) -> "np.ndarray":
+    """帧级 f0 连续性约束（野值剔除）。
+
+    25ms 帧仅含 2-3 个基频周期，NCF 单帧估计在相邻帧间会跳到竞争峰
+    （如 268Hz vs 213Hz 八度邻域，合成集实测 107/394 帧跳变>20Hz）。
+    直接对原始序列算 jitter 会把"估计器跳变"误读为"声带颤抖"
+    （TTS 平稳音频 jitter 虚高至 0.10-0.16，全员饱和）。
+
+    规则：偏离最近 5 个已接受值的中值 >15% 判为野值剔除；
+    若说话人真实音高切换（句末降调/强调升调），新值会连续出现，
+    轨迹中值随后跟上，不会整段误删。剔除率上限 70%（超过则信号不可信，
+    全部保留由 _detrended_jitter 自行处理）。
+    """
+    import numpy as np
+
+    arr = np.asarray(f0s, dtype=np.float64)
+    if len(arr) < 6:
+        return arr
+    out: list[float] = []
+    trail: list[float] = []
+    for v in arr:
+        if trail:
+            med = float(np.median(trail))
+            if abs(v - med) / med > 0.15:
+                continue
+        out.append(v)
+        trail.append(v)
+        if len(trail) > 5:
+            trail.pop(0)
+    if len(out) < len(arr) * 0.30:  # 剔除过多：估计器整体不稳，放弃过滤
+        return arr
+    return np.asarray(out, dtype=np.float64)
 
 
 def _best_f0(x, sr: int, lag_min: int, lag_max: int) -> float:
@@ -407,6 +511,17 @@ def _best_f0(x, sr: int, lag_min: int, lag_max: int) -> float:
             best_lag = half
         else:
             break
+
+    # 亚样本精度：ncf 峰值三点抛物线插值。
+    # f0 = sr/整数lag 的量化步长在 300Hz 处约 5.6Hz —— 帧间假跳动会被
+    # _detrended_jitter 误读为颤抖（合成集实测：jitter 虚高至 0.10-0.16，
+    # 全员打满 jitter 分，信号饱和失效）。插值后精度 ~0.5Hz。
+    if lag_min + 1 <= best_lag <= lag_max - 1:
+        y_m = ncf(best_lag - 1)
+        y_p = ncf(best_lag + 1)
+        denom = y_m - 2 * best_val + y_p
+        if denom < 0:  # 峰形（上凸）才插值
+            best_lag += 0.5 * (y_m - y_p) / denom  # 偏移 ∈(-1,1)
     return sr / best_lag
 
 

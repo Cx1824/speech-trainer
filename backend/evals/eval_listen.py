@@ -1,22 +1,23 @@
-"""盲听一致性评测：手机音频（外放翻录/手机直录均可）→ 管线紧张度 vs 你的听感。
+"""盲听一致性评测：合成反差集/手机音频 → 管线紧张度 vs 听感。
 
 用法：
   第一步（打分）：
-    .venv/bin/python evals/eval_listen.py --dir evals/listen/audio
+    .venv/bin/python evals/eval_listen.py --dir evals/listen
   第二步（盲听打分后对比）：
     1. 打开 evals/listen/ratings_template.csv，盲听 audio/ 下同名文件，
        按你的听感填 tension_1to5（1=非常放松 … 5=非常紧张），存为 ratings.csv
     2. .venv/bin/python evals/eval_listen.py --dir evals/listen --ratings
 
+信号完整性（与线上一致）：
+  - 有 key.json（gen_contrast.py 产物）时：自动构建【每音色基线】
+    （该音色 calm 条目的 jitter/f0/犹豫率）+ 文字语速（字数÷时长），
+    模拟线上"校准基线 + ASR 字数"的完整信号。缺 key.json 则两者为 None
+    （对应线上"未校准"状态）。
+
 输出：
-  - 每条音频的紧张度分 + 四信号明细（jitter/停顿/能量）+ 排序
+  - 每条音频的紧张度分 + 五信号明细 + 排序
   - 有 ratings 时：算法排序 vs 听感排序的一致性
     （Kendall tau + 完全一致对比例；tau≥0.6 方向感成立）
-
-口径说明：
-  - 未校准（人群默认基线）：手机外放会压缩 jitter 差距，绝对分值偏低属预期，
-    本实验只看【相对排序】是否与人耳一致
-  - 语速信号缺 ASR 文字，不参与（分母需要字数），仅声学三信号
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.modules.analysis.pcm_features import PcmFeatureBuffer
-from app.modules.analysis.voice_features import compute_tension_v2
+from app.modules.analysis.voice_features import VoiceBaseline, compute_tension_v2
 
 SUPPORTED = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
 
@@ -61,8 +62,12 @@ def wav_bytes_to_pcm(wav_bytes: bytes) -> bytes:
         return w.readframes(w.getnframes())
 
 
-def score_file(src: Path) -> dict | None:
-    """单文件全管线评分。"""
+def score_file(
+    src: Path,
+    baselines: dict[str, VoiceBaseline] | None = None,
+    char_count: int = 0,
+) -> dict | None:
+    """单文件全管线评分（可选：音色基线 + 文字语速，模拟线上完整信号）。"""
     try:
         wav = to_wav16k(src)
         pcm = wav_bytes_to_pcm(wav)
@@ -75,16 +80,56 @@ def score_file(src: Path) -> dict | None:
     feats = buf.flush()
     if feats.duration_sec < 2.0:
         return {"id": src.stem, "error": f"音频太短（{feats.duration_sec:.1f}s <2s）"}
-    score, detail = compute_tension_v2(feats, baseline=None)  # 人群默认基线
+    bl = (baselines or {}).get(src.stem)
+    speech_rate = char_count / feats.duration_sec if char_count else None
+    score, detail = compute_tension_v2(feats, baseline=bl, speech_rate=speech_rate)
     return {
         "id": src.stem,
         "sec": round(feats.duration_sec, 1),
         "tension": round(score, 1),
         "jitter": round(feats.pitch_jitter, 4),
         "f0": round(feats.pitch_mean, 1) if feats.pitch_mean else 0,
+        "hes": feats.hesitation_count,
         "pauses": feats.pause_count,
         "detail": detail,
     }
+
+
+def build_voice_baselines(
+    root: Path, key: list[dict], scored: dict[str, dict]
+) -> dict[str, VoiceBaseline]:
+    """从反差集 key.json 构建【每音色基线】：该音色 truth≤1.5 的 calm 条目
+    的 jitter/f0/犹豫率均值——模拟线上"校准朗读"产出的个人基线。
+
+    返回 {file_id: baseline}（同音色所有条目共享该基线）。
+    """
+    from collections import defaultdict
+
+    by_voice: dict[str, list[dict]] = defaultdict(list)
+    for k in key:
+        if k.get("truth_1to5", 5) <= 1.5 and k["file"] in scored:
+            by_voice[k["voice"]].append((k, scored[k["file"]]))
+
+    out: dict[str, VoiceBaseline] = {}
+    for k in key:
+        rows = by_voice.get(k["voice"])
+        if not rows:
+            continue
+        bl = VoiceBaseline(sample_sec=30.0, created_at="synthetic-calib")
+        bl.pitch_jitter = max(
+            0.045,  # 不低于管线噪声底（calm TTS 的 jitter 是噪声，不是真值
+                    # ——个人基线若低于噪声底会让所有人 jitter 超标）
+            sum(r[1]["jitter"] for r in rows) / len(rows)
+        )
+        bl.pitch_mean = sum(r[1]["f0"] for r in rows) / len(rows)
+        hrs = [r[1]["hes"] / r[1]["sec"] * 60 for r in rows]
+        bl.hesitation_rate = sum(hrs) / len(hrs)
+        # 语速基线：calm 条目的构造语速（无 ASR，用 char_count/sec）
+        srs = [r[0]["char_count"] / r[1]["sec"] for r in rows if r[0].get("char_count")]
+        if srs:
+            bl.speech_rate = sum(srs) / len(srs)
+        out[k["file"]] = bl
+    return out
 
 
 def kendall_tau(a: list[float], b: list[float]) -> float:
@@ -119,15 +164,35 @@ def main() -> None:
     if not files:
         print(f"{audio_dir} 下没有音频（支持 {'/'.join(sorted(SUPPORTED))}）")
         return
+
+    # 反差集模式：key.json 提供 voice/char_count → 每音色基线 + 文字语速
+    key_by_file: dict[str, dict] = {}
+    key_path = root / "key.json"
+    if key_path.exists():
+        import json
+        key_by_file = {k["file"]: k for k in json.loads(key_path.read_text(encoding="utf-8"))}
+        print(f"检测到 key.json：{len(key_by_file)} 条 → 启用音色基线 + 文字语速（模拟线上校准态）")
+
     print(f"评分 {len(files)} 条…")
-    rows = [r for r in (score_file(f) for f in files) if r]
+    # 第一遍：无基线粗评（拿 f0/jitter/hes 供基线构建）
+    base_scored = {r["id"]: r for r in (score_file(f) for f in files) if r and "error" not in r}
+    baselines = None
+    if key_by_file:
+        baselines = build_voice_baselines(root, list(key_by_file.values()), base_scored)
+    # 第二遍：带基线 + 语速终评
+    rows = []
+    for f in files:
+        k = key_by_file.get(f.stem, {})
+        r = score_file(f, baselines=baselines, char_count=k.get("char_count", 0))
+        if r:
+            rows.append(r)
     errs = [r for r in rows if "error" in r]
     rows = [r for r in rows if "error" not in r]
     rows.sort(key=lambda r: -r["tension"])
 
-    print(f"\n{'文件':<32} {'紧张度':>6} {'jitter':>7} {'f0':>6} {'停顿':>4} {'秒':>6}")
+    print(f"\n{'文件':<32} {'紧张度':>6} {'jitter':>7} {'f0':>6} {'犹豫':>4} {'停顿':>4} {'秒':>6}")
     for r in rows:
-        print(f"{r['id']:<32} {r['tension']:>6} {r['jitter']:>7} {r['f0']:>6} {r['pauses']:>4} {r['sec']:>6}")
+        print(f"{r['id']:<32} {r['tension']:>6} {r['jitter']:>7} {r['f0']:>6} {r['hes']:>4} {r['pauses']:>4} {r['sec']:>6}")
     for e in errs:
         print(f"⚠️  {e['id']}: {e['error']}")
 

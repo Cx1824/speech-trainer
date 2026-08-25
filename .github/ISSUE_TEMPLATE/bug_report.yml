@@ -1,0 +1,62 @@
+name: 缺陷报告
+description: 帮助我们复现并修复一个可观察的问题
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。请勿粘贴 API Key、完整训练录音、简历、数据库或其他个人信息。安全问题请阅读 SECURITY.md 后通过私下渠道报告。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题概述
+      description: 实际发生了什么？
+      placeholder: 例如：结束工作汇报后，报告没有显示本轮转写内容。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 最小复现步骤
+      description: 请从启动项目开始，按顺序列出可以稳定复现问题的步骤。
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为与实际行为
+      placeholder: 期望…；实际…
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 受影响区域
+      options:
+        - 实时训练
+        - 字幕或提示
+        - 报告
+        - 配置或 Provider
+        - 材料解析
+        - 启动或安装
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 运行环境
+      description: 请提供操作系统、Python/Node 版本、浏览器和项目提交号；请勿提供密钥或个人数据。
+      placeholder: macOS 15；Python 3.13；Node 22；Chrome；commit abc1234
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 脱敏后的日志或截图（可选）
+      description: 仅提供与问题直接相关且已完成脱敏的片段。

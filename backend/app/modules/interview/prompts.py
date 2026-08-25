@@ -41,6 +41,16 @@ def _format_history(dialogues: list[dict]) -> str:
     return "\n".join([f"{'面试官' if d['role']=='ai' else '候选人'}：{d['text']}" for d in dialogues[-10:]])
 
 
+def _format_extended_history(dialogues: list[dict]) -> str:
+    """结构化面试保留更长历史，避免后半程遗忘已经覆盖的问题。"""
+    if not dialogues:
+        return "（无）"
+    return "\n".join(
+        f"{'面试官' if dialogue['role'] == 'ai' else '候选人'}：{dialogue['text']}"
+        for dialogue in dialogues[-24:]
+    )
+
+
 def _format_jd(company: str, jd_content: str) -> str:
     """格式化 JD 信息。"""
     parts = []
@@ -114,6 +124,78 @@ def build_messages(
 
     return [
         {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user},
+    ]
+
+
+def build_planned_messages(
+    *,
+    position: str,
+    level: str,
+    resume: dict[str, Any] | None,
+    dialogues: list[dict],
+    style: InterviewStyle | str,
+    company: str,
+    jd_content: str,
+    item: dict[str, Any],
+    is_followup: bool,
+    covered_labels: list[str],
+    remaining_labels: list[str],
+    question_candidate: dict[str, Any] | None = None,
+) -> list[dict]:
+    """根据控制器指定的能力维度生成一道问题。
+
+    模型只负责把既定意图写成自然问题；是否追问、何时换题和何时结束
+    均由面试计划控制，不能由模型自由延长单一主题。
+    """
+    style_prompt = get_style(style).system_prompt
+    resume_text = _format_resume(resume)
+    history_text = _format_extended_history(dialogues)
+    jd_text = _format_jd(company, jd_content) or "（未提供公司或 JD）"
+    candidate_text = ""
+    if question_candidate:
+        candidate_text = (
+            "\n岗位题库候选："
+            f"{question_candidate.get('content', '')}\n"
+            "可以结合上下文自然改写，但不得改变本轮能力维度。"
+        )
+    turn_instruction = (
+        "这是当前主问题的唯一一次必要追问。只补齐一个最关键缺口；"
+        "如果候选人已明确表示没有精确数据或没有相关经历，接受这个边界并换成经验范围、验证方式或复盘问题，禁止反复逼问同一数字。"
+        if is_followup
+        else (
+            "这是新的主问题，必须切换到本轮指定能力维度，不得继续追问上一题的数字、措辞或同一事实。"
+            + ("这是第一题，先用一句简短问候自然开场，再邀请候选人自我介绍。" if item.get("id") == "self_intro" else "")
+        )
+    )
+    user = f"""目标岗位：{position}
+职级：{level}
+公司与 JD：
+{jd_text}
+
+候选人简历：
+{resume_text}
+
+已覆盖：{'、'.join(covered_labels) or '尚未覆盖'}
+后续仍需覆盖：{'、'.join(remaining_labels) or '无'}
+本轮能力维度：{item['label']}
+本轮问题意图：{item['goal']}
+问题类型：{'追问' if is_followup else '主问题'}
+
+面试历史：
+{history_text}
+{candidate_text}
+
+{turn_instruction}
+只输出面试官此刻要说的一段自然中文。一次只问一个核心问题，不要加“面试官：”、阶段名称、评分、解释或 Markdown。"""
+    return [
+        {
+            "role": "system",
+            "content": (
+                f"{style_prompt}"
+                "面试计划的覆盖范围和换题边界高于风格要求：风格只能改变语气与追问力度，不能让你重复同一问题、跳过其他能力维度或自行结束面试。"
+            ),
+        },
         {"role": "user", "content": user},
     ]
 

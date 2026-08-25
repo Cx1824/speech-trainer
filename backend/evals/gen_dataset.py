@@ -1,4 +1,4 @@
-"""合成真值集生成器：edge-tts 多音色 × 多语速批量合成 + 真值标签 manifest。
+"""合成回归集生成器：edge-tts 多音色 × 多语速批量合成 + 构造标签 manifest。
 
 用法（backend venv）：
     .venv/bin/python evals/gen_dataset.py [--out evals/dataset] [--limit N]
@@ -6,15 +6,15 @@
 产物：
     evals/dataset/
       audio/           # 16kHz mono wav（ffmpeg 从 edge-tts mp3 转码）
-      manifest.json    # 每条：id/voice/rate/text/char_count/notes + 真值标签
+      manifest.json    # 每条：id/voice/rate/text/char_count/notes + 构造标签
 
-真值原理（第一性）：
+可验证口径：
   - 语速：edge-tts --rate=+X% 注入的播放速率已知 → 各条相对基准(rate=0)
     的字/秒 应≈ (1+X/100) 倍。绝对值不做断言（TTS 自身停顿不控），只断相对比。
   - 基频：音色固定 → 同音色所有条目的 f0 中位数应稳定（跨条变异 <8%）；
     八度减半/倍频错误通过绝对值区间暴露（男声 85-200Hz，女声 160-320Hz）。
-  - jitter/能量：TTS 平稳发声 → detrended jitter 应处于低参考带（记录基线
-    分布，作为"机器平稳"参考；真人紧张应显著高于该带）。
+  - jitter/能量：记录 TTS 的可重复参考带，只验证提取管线稳定性；
+    不把合成结果外推为真人心理状态。
 """
 
 from __future__ import annotations

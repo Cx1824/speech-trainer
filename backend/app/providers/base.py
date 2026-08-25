@@ -38,10 +38,15 @@ class BaseLLMProvider(BaseProvider):
         *,
         temperature: float = 0.7,
         stream: bool = False,
+        max_tokens: int | None = None,
+        read_timeout: float | None = None,
+        thinking: bool | None = None,
     ) -> str | AsyncIterator[str]:
         """对话补全。
 
         stream=True 时返回 AsyncIterator[str]（增量文本）。
+        max_tokens/read_timeout 仅用于有明确边界的非流式长任务；普通调用沿用默认值。
+        thinking 仅在调用方明确要求且厂商协议支持时传递。
         """
 
 

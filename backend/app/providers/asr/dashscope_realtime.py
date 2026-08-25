@@ -113,18 +113,42 @@ class RealtimeASRSession:
         self._final_event = asyncio.Event()
         self._closed = False
         self._started = False
+        self._pushed_chunks = 0
+        self._pushed_bytes = 0
         # 回调（可被外部替换）
         self.on_partial: Callable[[str], None] = lambda t: None
         self.on_final: Callable[[str], None] = lambda t: None
         self.on_error: Callable[[str], None] = lambda t: None
 
     async def start(self) -> None:
+        last_error: Exception | None = None
+        # 公网 WebSocket 偶发握手超时。只对连接/等待异常重试一次；服务端明确
+        # 拒绝任务时立即返回原始错误，避免重复计费或掩盖配置问题。
+        for attempt in range(2):
+            try:
+                await self._start_once()
+                return
+            except ProviderError:
+                raise
+            except Exception as exc:
+                last_error = exc
+                if self._ws is not None:
+                    try:
+                        await self._ws.close()
+                    except Exception:
+                        pass
+                    self._ws = None
+                if attempt == 0:
+                    self.task_id = uuid.uuid4().hex
+                    await asyncio.sleep(0.5)
+        raise ProviderError(f"ASR WebSocket 连接失败：{last_error}") from last_error
+
+    async def _start_once(self) -> None:
         url = f"{WS_BASE}?model={self.model}"
         headers = {"Authorization": f"Bearer {self.api_key}"}
-        try:
-            self._ws = await websockets.connect(url, additional_headers=headers, open_timeout=10)
-        except Exception as e:
-            raise ProviderError(f"ASR WebSocket 连接失败：{e}") from e
+        self._ws = await websockets.connect(
+            url, additional_headers=headers, open_timeout=10
+        )
 
         await self._ws.send(json.dumps({
             "header": {
@@ -159,19 +183,21 @@ class RealtimeASRSession:
         ack = await asyncio.wait_for(self._ws.recv(), timeout=10)
         evt = json.loads(ack)
         status = evt.get("header", {}).get("event")
-        if status == "task-started":
-            self._started = True
-            self._recv_task = asyncio.create_task(self._recv_loop())
-        else:
+        if status != "task-started":
             msg = evt.get("header", {}).get("error_message", "启动失败")
             await self._ws.close()
+            self._ws = None
             raise ProviderError(f"ASR 任务启动失败：{msg}")
+        self._started = True
+        self._recv_task = asyncio.create_task(self._recv_loop())
 
     async def push_audio(self, pcm: bytes) -> None:
         if self._ws is None or not self._started or self._closed:
             return
         try:
             await self._ws.send(pcm)
+            self._pushed_chunks += 1
+            self._pushed_bytes += len(pcm)
         except websockets.ConnectionClosed:
             pass
 
@@ -192,9 +218,17 @@ class RealtimeASRSession:
             try:
                 await asyncio.wait_for(self._final_event.wait(), timeout=10)
             except asyncio.TimeoutError:
-                logger.warning("ASR finish 等待超时")
+                logger.warning(
+                    "ASR finish 等待超时（已发送 %d 帧 / %d 字节）",
+                    self._pushed_chunks,
+                    self._pushed_bytes,
+                )
         except websockets.ConnectionClosed:
             pass
+
+    async def flush_utterance(self) -> None:
+        """云端依靠服务端 VAD 断句；保留统一会话接口。"""
+        return
 
     async def close(self) -> None:
         self._closed = True
@@ -225,24 +259,37 @@ class RealtimeASRSession:
                 if event == "result-generated":
                     sentence = payload.get("output", {}).get("sentence", {})
                     text = sentence.get("text", "")
+                    logger.debug(
+                        "ASR result received: final=%s chars=%d",
+                        bool(sentence.get("sentence_end")),
+                        len(text),
+                    )
                     # sentence_end=True 表示该句已定稿
                     if sentence.get("sentence_end"):
                         if text:
-                            self.on_final(text)
+                            self._run_callback(self.on_final, text, "final")
                     else:
                         if text:
-                            self.on_partial(text)
+                            self._run_callback(self.on_partial, text, "partial")
                 elif event == "task-finished":
                     self._final_event.set()
                 elif event == "task-failed":
                     err = payload.get("message") or header.get("error_message", "识别失败")
                     logger.error("ASR task-failed: %s", err)
-                    self.on_error(err)
+                    self._run_callback(self.on_error, err, "error")
                     self._final_event.set()
         except websockets.ConnectionClosed:
             self._final_event.set()
         except asyncio.CancelledError:
             raise
+
+    @staticmethod
+    def _run_callback(callback: Callable[[str], None], value: str, kind: str) -> None:
+        """隔离业务回调异常，避免一次分析/推送错误终止整个识别接收循环。"""
+        try:
+            callback(value)
+        except Exception:
+            logger.exception("ASR %s callback failed", kind)
 
 
 registry.register(DashScopeRealtimeASR)

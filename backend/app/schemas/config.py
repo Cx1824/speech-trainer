@@ -12,12 +12,17 @@ class ProviderStatus(BaseModel):
     base_url: str = ""
     model: str = ""
     has_key: bool = False
+    ready: bool = False
+    status_message: str = ""
 
 
 class ProviderConfigIn(BaseModel):
     """单个 Provider 的配置写入。"""
 
-    provider: str = Field(..., description="厂商标识：tencent/xfyun/aliyun/openai/custom")
+    provider: str = Field(
+        ...,
+        description="服务标识：sherpa_onnx/dashscope/aliyun/openai/custom",
+    )
     base_url: str = ""
     api_key: str = ""
     api_secret: str = ""

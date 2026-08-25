@@ -1,0 +1,122 @@
+import type { ReportData } from '@/types/report'
+
+/** 仅用于首次体验的固定示例，不代表真实用户或算法有效性证明。 */
+export const DEMO_REPORT: ReportData = {
+  session_id: 'demo',
+  scenario: 'interview',
+  scenario_name: '模拟面试',
+  position: '产品经理',
+  level: '中级',
+  overall_score: 78.6,
+  score_coverage: 1,
+  sample_state: 'voice_calibrated',
+  summary: '回答有明确结论和项目结果，但关键决策依据还可以更具体。',
+  axes: [
+    {
+      key: 'continuity',
+      label: '表达连贯性',
+      description: '明确口癖与紧邻用词重复情况',
+      score: 82,
+      weight: 20,
+      source: 'signal',
+    },
+    {
+      key: 'pacing',
+      label: '语速控制',
+      description: '基于真实发言时长的语速情况',
+      score: 76,
+      weight: 15,
+      source: 'signal',
+    },
+    {
+      key: 'response_structure',
+      label: '回答结构',
+      description: '结论、论据与 STAR 结构是否清楚',
+      score: 84,
+      weight: 30,
+      source: 'llm',
+      feedback: '结论和结果清楚，行动部分可以补充取舍过程。',
+      evidence: ['“上线两周后，核心流程完成率从 62% 提升到 78%。”'],
+    },
+    {
+      key: 'job_relevance',
+      label: '岗位匹配',
+      description: '回答证据与岗位要求、项目经历的相关程度',
+      score: 73,
+      weight: 35,
+      source: 'llm',
+      feedback: '项目结果与岗位相关，但没有说明为什么选择这个方案。',
+      evidence: ['“我负责梳理需求并推动设计、研发一起完成改版。”'],
+    },
+  ],
+  expression_metrics: {
+    speech_rate: 188,
+    speech_rate_level: '适中',
+    speech_duration_sec: 94,
+    duration_source: 'voice',
+    total_words: 294,
+    filler_total: 3,
+    filler_top: [{ word: '嗯', count: 2 }, { word: '呃', count: 1 }],
+    repetition_rate: 0.08,
+    expression_break_count: 0,
+    expression_break_examples: [],
+    short_pause_count: 4,
+    short_pause_rate: 2.6,
+    long_pause_count: 2,
+    long_pause_rate: 1.3,
+  },
+  delivery_metrics: {
+    stability_score: null,
+    calibrated: true,
+    voice_signal: true,
+    pitch_jitter: 0.052,
+    note: '声音波动仅作为实验事实记录，暂不合并为稳定或紧张评分',
+  },
+  voice_reference: {
+    version: 'voice-reference-v2',
+    available: true,
+    summary: '声音有一些起伏，语速适中，表达整体流畅，节奏较自然。',
+    confidence: '中等',
+    confidence_note: '录音信息较充足，但结论仍建议结合实际回听。',
+    dimensions: [
+      { key: 'variation', label: '声音起伏', value: '有一些起伏', detail: '有自然的声音变化，没有持续出现快速波动。' },
+      { key: 'fluency', label: '表达流畅', value: '整体流畅', detail: '口癖和紧邻重复较少，没有形成明显卡顿。' },
+      { key: 'pacing', label: '节奏变化', value: '较自然', detail: '语速适中，正文停顿没有形成明显节奏问题。' },
+    ],
+    basis: ['声音高低的快速变化：适中', '语速：适中（188.0 字/分钟）', '口癖与重复：3 次口癖，8.0% 紧邻重复'],
+    is_scored: false,
+  },
+  suggestions: {
+    short_term: [
+      '每次回答先用一句话给出结论，再补两条关键依据。',
+      '遇到“嗯/呃”时先停顿半拍，再给出下一个完整句子。',
+    ],
+    mid_term: [
+      '准备三个能够体现判断与取舍的项目案例，并分别压缩到两分钟。',
+    ],
+  },
+  professional_advice: [
+    {
+      topic: 'STAR 结构',
+      detail: '结果已经量化；下一步重点补足“为什么这样做”和备选方案比较。',
+    },
+    {
+      topic: '岗位匹配',
+      detail: '把跨团队推进过程中的具体冲突、判断和影响说清楚，会比描述职责更有说服力。',
+    },
+  ],
+  dialogues: [
+    {
+      seq: 1,
+      role: 'ai',
+      stage: 'project',
+      text: '请介绍一个你主导改进核心产品流程的项目。',
+    },
+    {
+      seq: 2,
+      role: 'user',
+      stage: 'project',
+      text: '我负责梳理需求并推动设计、研发一起完成改版。上线两周后，核心流程完成率从 62% 提升到 78%。',
+    },
+  ],
+}

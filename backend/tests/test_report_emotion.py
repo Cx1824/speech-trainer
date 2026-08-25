@@ -1,4 +1,4 @@
-"""报告情绪聚合与场景评审人格测试。"""
+"""报告表达信号聚合与场景评审配置测试。"""
 
 import json
 
@@ -14,7 +14,7 @@ class _Row:
 
 
 def test_aggregate_emotion_uses_session_acoustic():
-    """有逐句声学记录时：报告情绪=会话聚合（朗读含修辞词的文章不再被误判）。"""
+    """有逐句声学记录时，报告复用会话聚合值，不从全文措辞猜测声音状态。"""
     rows = [
         _Row("ai", ""),
         _Row("user", json.dumps({"tension_score": 22.5, "confidence_score": 68.0})),
@@ -23,7 +23,7 @@ def test_aggregate_emotion_uses_session_acoustic():
     ]
     e = _aggregate_emotion(rows, "一篇含可能应该大概然后的文章" * 50)
     assert e.tension_score == 25.3
-    assert e.tension_level == "平稳"
+    assert e.tension_level == "接近平时"
     assert e.confidence_score == 70.0
 
 
@@ -39,9 +39,9 @@ def test_aggregate_emotion_partial_fields():
 
 
 def test_aggregate_emotion_fallback_to_text():
-    """无任何逐句记录（旧会话）：回落纯文本判定（口径不变）。"""
+    """无逐句记录的旧会话仍可读取兼容代理值。"""
     e = _aggregate_emotion([_Row("user", "")], "可能大概应该然后可能大概")
-    assert e.tension_score >= 40  # 纯文本口径起步偏紧
+    assert e.tension_score >= 40
     assert e.confidence_score < 40
 
 

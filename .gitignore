@@ -9,13 +9,28 @@ __pycache__/
 # Node
 node_modules/
 frontend/dist/
+frontend/.vite/
+frontend/.vite-temp/
+.playwright-mcp/
 *.tsbuildinfo
 vite.config.ts.timestamp-*
+
+# 本地验收与临时产物（演示素材请放在明确的公开目录，不使用这些路径）
+/.impeccable/
+/.acceptance/
+/artifacts/
+/screenshots/
+/tmp/
+/test-results/
+/playwright-report/
+*.tmp
 
 # 数据与用户文件（不入库）
 backend/data/
 backend/uploads/
 backend/output/
+# 评测清单、结果 CSV 和方法文档可以公开；仅忽略本地下载或录制的音频。
+backend/evals/listen/audio/
 *.db
 *.db-journal
 *.sqlite3
@@ -28,6 +43,7 @@ logs/
 # 环境变量
 .env
 .env.*
+!**/.env.example
 
 # 系统
 .DS_Store
