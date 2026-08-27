@@ -15,9 +15,16 @@ catch {
 
 $PackageRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $BackendDir = Join-Path $PackageRoot "backend"
+$PackagedRuntimeDir = Join-Path $PackageRoot "runtime"
+$RuntimeManifestFile = Join-Path $PackagedRuntimeDir "runtime.json"
+$WheelhouseManifestFile = Join-Path $PackagedRuntimeDir "wheelhouse.json"
+$RequirementsFile = Join-Path $PackagedRuntimeDir "requirements.txt"
+$WheelhouseDir = Join-Path $PackagedRuntimeDir "wheels"
+$PackagedModelDir = Join-Path $PackagedRuntimeDir "models"
 $RuntimeDir = Join-Path $PackageRoot ".runtime"
-$VenvDir = Join-Path $RuntimeDir "venv"
-$VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+$BundledPythonDir = Join-Path $RuntimeDir "python"
+$BundledPython = Join-Path $BundledPythonDir "python.exe"
+$PackagesDir = Join-Path $RuntimeDir "python-packages"
 $PidFile = Join-Path $RuntimeDir "speech-trainer.pid"
 $LogDir = Join-Path $RuntimeDir "logs"
 $StdoutLog = Join-Path $LogDir "backend.log"
@@ -34,6 +41,183 @@ function Write-Step([string]$Message) {
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+function Read-JsonFile([string]$Path, [string]$Description) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "安装包缺少$Description。请重新下载并完整解压新版安装包。"
+    }
+    try {
+        return Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    catch {
+        throw "安装包中的$Description已损坏。请重新下载并完整解压新版安装包。"
+    }
+}
+
+function Test-OwnedRuntimePath([string]$Path) {
+    $fullRuntime = [System.IO.Path]::GetFullPath($RuntimeDir).TrimEnd('\') + '\'
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    return $fullPath.StartsWith($fullRuntime, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Remove-OwnedRuntimePath([string]$Path) {
+    if (-not (Test-OwnedRuntimePath $Path)) {
+        throw "拒绝清理安装包运行目录之外的路径。"
+    }
+    if (Test-Path -LiteralPath $Path) {
+        Remove-Item -LiteralPath $Path -Recurse -Force
+    }
+}
+
+function Test-BundledPython([string]$PythonPath) {
+    if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) { return $false }
+    try {
+        # Windows PowerShell 5.1 removes embedded double quotes while rebuilding
+        # arguments for native programs. Keep the Python probe free of them so it
+        # reaches python.exe unchanged on the oldest supported PowerShell.
+        $probeCode = "import sys;print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}|{64 if sys.maxsize>2**32 else 32}')"
+        $probe = & $PythonPath -I -c $probeCode 2>$null
+        return $LASTEXITCODE -eq 0 -and [string]$probe -eq "3.12.14|64"
+    }
+    catch {
+        return $false
+    }
+}
+
+function Ensure-BundledPython {
+    $manifest = Read-JsonFile $RuntimeManifestFile "内置 Python 清单"
+    if (
+        [int]$manifest.schema_version -ne 1 -or
+        [string]$manifest.python_version -ne "3.12.14" -or
+        [string]$manifest.architecture -ne "x86_64"
+    ) {
+        throw "安装包中的内置 Python 版本不受支持。请使用完整的新版安装包。"
+    }
+
+    $archiveName = [string]$manifest.archive
+    if ([System.IO.Path]::GetFileName($archiveName) -ne $archiveName) {
+        throw "安装包中的内置 Python 清单无效。请使用完整的新版安装包。"
+    }
+    $archive = Join-Path $PackagedRuntimeDir $archiveName
+    if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+        throw "安装包缺少内置 Python 文件。请重新下载并完整解压新版安装包。"
+    }
+    $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualHash -ne ([string]$manifest.archive_sha256).ToLowerInvariant()) {
+        throw "安装包内置 Python 校验失败。请删除当前副本后重新下载并解压。"
+    }
+
+    if (Test-BundledPython $BundledPython) { return }
+
+    Write-Step "首次运行：正在准备安装包自带的运行环境"
+    $staging = Join-Path $RuntimeDir "python.installing"
+    Remove-OwnedRuntimePath $staging
+    New-Item -ItemType Directory -Force -Path $staging | Out-Null
+    try {
+        Expand-Archive -LiteralPath $archive -DestinationPath $staging -Force
+        $stagingPython = Join-Path $staging "python.exe"
+        if (-not (Test-BundledPython $stagingPython)) {
+            throw "解压后的内置 Python 无法运行。请确认系统为 64 位 Windows 10/11。"
+        }
+        Remove-OwnedRuntimePath $BundledPythonDir
+        Move-Item -LiteralPath $staging -Destination $BundledPythonDir
+    }
+    catch {
+        Remove-OwnedRuntimePath $staging
+        throw
+    }
+}
+
+function Set-IsolatedPythonEnvironment([string]$CandidatePackages = $PackagesDir) {
+    $separator = [System.IO.Path]::PathSeparator
+    $env:PYTHONPATH = "$BackendDir$separator$CandidatePackages"
+    $env:PYTHONNOUSERSITE = "1"
+    $env:PYTHONDONTWRITEBYTECODE = "1"
+    $env:SPEECH_TRAINER_MODEL_DIR = $PackagedModelDir
+    Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
+    $env:PATH = "$BundledPythonDir$separator$env:PATH"
+}
+
+function Test-PackagedWheelhouse($Manifest) {
+    if (-not (Test-Path -LiteralPath $RequirementsFile -PathType Leaf)) {
+        throw "安装包缺少依赖清单。请重新下载并完整解压新版安装包。"
+    }
+    $requirementsHash = (Get-FileHash -LiteralPath $RequirementsFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($requirementsHash -ne ([string]$Manifest.requirements_sha256).ToLowerInvariant()) {
+        throw "安装包依赖清单校验失败。请重新下载并完整解压新版安装包。"
+    }
+
+    $wheelProperties = @($Manifest.wheels.PSObject.Properties)
+    if ($wheelProperties.Count -eq 0) {
+        throw "安装包没有可用的离线依赖。请重新下载完整的新版安装包。"
+    }
+    foreach ($wheel in $wheelProperties) {
+        $wheelName = [string]$wheel.Name
+        if ([System.IO.Path]::GetFileName($wheelName) -ne $wheelName) {
+            throw "安装包离线依赖清单无效。请重新下载完整的新版安装包。"
+        }
+        $wheelPath = Join-Path $WheelhouseDir $wheelName
+        if (-not (Test-Path -LiteralPath $wheelPath -PathType Leaf)) {
+            throw "安装包缺少离线依赖文件。请重新下载并完整解压新版安装包。"
+        }
+        $wheelHash = (Get-FileHash -LiteralPath $wheelPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($wheelHash -ne ([string]$wheel.Value).ToLowerInvariant()) {
+            throw "安装包离线依赖校验失败。请删除当前副本后重新下载并解压。"
+        }
+    }
+}
+
+function Test-InstalledDependencies([string]$CandidatePackages) {
+    if (-not (Test-Path -LiteralPath $CandidatePackages -PathType Container)) { return $false }
+    Set-IsolatedPythonEnvironment $CandidatePackages
+    try {
+        & $BundledPython -c "import fastapi,numpy,scipy,sherpa_onnx,sqlalchemy,uvicorn,websockets" 2>$null
+        return $LASTEXITCODE -eq 0
+    }
+    catch {
+        return $false
+    }
+}
+
+function Ensure-Dependencies {
+    Ensure-BundledPython
+    $wheelhouse = Read-JsonFile $WheelhouseManifestFile "离线依赖清单"
+    Test-PackagedWheelhouse $wheelhouse
+
+    $runtimeManifest = Read-JsonFile $RuntimeManifestFile "内置 Python 清单"
+    $expectedMarker = "$($runtimeManifest.archive_sha256)|$($wheelhouse.requirements_sha256)"
+    if ((Test-Path -LiteralPath $DependencyMarker -PathType Leaf) -and (Test-InstalledDependencies $PackagesDir)) {
+        $actualMarker = (Get-Content -LiteralPath $DependencyMarker -Raw).Trim()
+        if ($actualMarker -eq $expectedMarker) {
+            Set-IsolatedPythonEnvironment
+            return
+        }
+    }
+
+    Write-Step "首次运行：正在安装随包附带的程序组件（无需下载）"
+    $staging = Join-Path $RuntimeDir "python-packages.installing"
+    Remove-OwnedRuntimePath $staging
+    New-Item -ItemType Directory -Force -Path $staging | Out-Null
+    try {
+        & $BundledPython -I -m pip install --disable-pip-version-check --no-index `
+            --no-compile --target $staging --requirement $RequirementsFile `
+            --find-links $WheelhouseDir
+        if ($LASTEXITCODE -ne 0) { throw "安装随包程序组件失败。" }
+
+        if (-not (Test-InstalledDependencies $staging)) {
+            throw "随包程序组件安装后未通过自检。"
+        }
+
+        Remove-OwnedRuntimePath $PackagesDir
+        Move-Item -LiteralPath $staging -Destination $PackagesDir
+        Set-IsolatedPythonEnvironment
+        Set-Content -LiteralPath $DependencyMarker -Value $expectedMarker -Encoding ASCII
+    }
+    catch {
+        Remove-OwnedRuntimePath $staging
+        throw
+    }
+}
+
 function Test-SpeechTrainer {
     try {
         $health = Invoke-RestMethod -Uri "${AppUrl}api/health" -TimeoutSec 2
@@ -45,24 +229,24 @@ function Test-SpeechTrainer {
 }
 
 function Stop-SpeechTrainer {
-    if (-not (Test-Path $PidFile)) {
+    if (-not (Test-Path -LiteralPath $PidFile)) {
         Write-Host "训练器当前没有由本启动包记录的运行进程。"
         return
     }
 
-    $recorded = (Get-Content $PidFile -Raw).Trim()
+    $recorded = (Get-Content -LiteralPath $PidFile -Raw).Trim()
     if ($recorded -notmatch "^\d+$") {
         throw "PID 记录无效，已拒绝停止未知进程。"
     }
 
     $process = Get-CimInstance Win32_Process -Filter "ProcessId = $recorded" -ErrorAction SilentlyContinue
     if ($null -eq $process) {
-        Remove-Item $PidFile -Force
+        Remove-Item -LiteralPath $PidFile -Force
         Write-Host "训练器已经停止。"
         return
     }
 
-    $expectedPython = [System.IO.Path]::GetFullPath($VenvPython)
+    $expectedPython = [System.IO.Path]::GetFullPath($BundledPython)
     $actualPython = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
     $commandLine = [string]$process.CommandLine
     if (
@@ -74,104 +258,8 @@ function Stop-SpeechTrainer {
     }
 
     Stop-Process -Id ([int]$recorded) -Force
-    Remove-Item $PidFile -Force
+    Remove-Item -LiteralPath $PidFile -Force
     Write-Host "训练器已停止。"
-}
-
-function Test-PythonCandidate([string]$FilePath, [string[]]$PrefixArgs) {
-    try {
-        $probe = & $FilePath @PrefixArgs -c "import struct, sys; print(f'{sys.version_info.major}.{sys.version_info.minor}|{struct.calcsize(`"P`") * 8}')" 2>$null
-        $parts = [string]$probe -split "\|"
-        $version = $parts[0]
-        $bits = if ($parts.Count -gt 1) { $parts[1] } else { "" }
-        if (
-            $LASTEXITCODE -ne 0 -or
-            $version -notin @("3.11", "3.12") -or
-            $bits -ne "64"
-        ) {
-            return $null
-        }
-        return [PSCustomObject]@{
-            File = $FilePath
-            PrefixArgs = $PrefixArgs
-            Version = $version
-        }
-    }
-    catch {
-        return $null
-    }
-}
-
-function Find-CompatiblePython {
-    $pyLauncher = Get-Command "py.exe" -ErrorAction SilentlyContinue
-    if ($null -ne $pyLauncher) {
-        foreach ($versionArg in @("-3.12", "-3.11")) {
-            $candidate = Test-PythonCandidate $pyLauncher.Source @($versionArg)
-            if ($null -ne $candidate) { return $candidate }
-        }
-    }
-
-    $pythonCommand = Get-Command "python.exe" -ErrorAction SilentlyContinue
-    if ($null -ne $pythonCommand) {
-        $candidate = Test-PythonCandidate $pythonCommand.Source @()
-        if ($null -ne $candidate) { return $candidate }
-    }
-
-    $knownRoots = @(
-        (Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"),
-        (Join-Path $env:LOCALAPPDATA "Programs\Python\Python311\python.exe")
-    )
-    foreach ($knownPath in $knownRoots) {
-        if (Test-Path $knownPath) {
-            $candidate = Test-PythonCandidate $knownPath @()
-            if ($null -ne $candidate) { return $candidate }
-        }
-    }
-    return $null
-}
-
-function Install-CompatiblePython {
-    $winget = Get-Command "winget.exe" -ErrorAction SilentlyContinue
-    if ($null -eq $winget) {
-        throw "没有找到 Python 3.11/3.12，也没有找到 winget。请先从 python.org 安装 64 位 Python 3.12，再重新双击启动。"
-    }
-
-    Write-Step "首次运行：正在安装 Python 3.12（仅当前用户）"
-    & $winget.Source install --id Python.Python.3.12 -e --scope user --silent `
-        --accept-package-agreements --accept-source-agreements --disable-interactivity
-    if ($LASTEXITCODE -ne 0) {
-        throw "Python 自动安装失败。请手动安装 64 位 Python 3.12 后重试。"
-    }
-}
-
-function Ensure-Dependencies {
-    if ((Test-Path $VenvPython) -and (Test-Path $DependencyMarker)) {
-        return
-    }
-
-    $python = Find-CompatiblePython
-    if ($null -eq $python) {
-        Install-CompatiblePython
-        $python = Find-CompatiblePython
-    }
-    if ($null -eq $python) {
-        throw "Python 3.12 已请求安装，但当前终端仍无法找到它。请关闭窗口后重新双击启动。"
-    }
-
-    New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
-    if (-not (Test-Path $VenvPython)) {
-        Write-Step "首次运行：正在创建独立运行环境"
-        $prefixArgs = @($python.PrefixArgs)
-        & $python.File @prefixArgs -m venv $VenvDir
-        if ($LASTEXITCODE -ne 0) { throw "创建 Python 运行环境失败。" }
-    }
-
-    Write-Step "首次运行：正在安装训练器依赖（通常需要 3–8 分钟）"
-    & $VenvPython -m pip install --disable-pip-version-check --upgrade pip
-    if ($LASTEXITCODE -ne 0) { throw "pip 更新失败。" }
-    & $VenvPython -m pip install --disable-pip-version-check -e $BackendDir
-    if ($LASTEXITCODE -ne 0) { throw "训练器依赖安装失败。" }
-    Set-Content -Path $DependencyMarker -Value "ready" -Encoding ASCII
 }
 
 function Ensure-LocalModels {
@@ -179,14 +267,9 @@ function Ensure-LocalModels {
 from app.providers.asr.sherpa_local import local_finalizer_ready, local_model_ready
 raise SystemExit(0 if local_model_ready() and local_finalizer_ready() else 1)
 "@
-    & $VenvPython -c $checkCode
+    & $BundledPython -c $checkCode
     if ($LASTEXITCODE -eq 0) { return }
-
-    Write-Step "首次运行：正在下载本地语音模型（约 300 MB，解压后约 410 MB）"
-    & $VenvPython (Join-Path $BackendDir "scripts\install_local_asr.py")
-    if ($LASTEXITCODE -ne 0) {
-        throw "本地语音模型安装失败。请检查网络后重新双击启动，已下载完成的文件会自动校验。"
-    }
+    throw "安装包内置语音模型不完整。请删除当前副本，重新下载新版完整安装包并解压。"
 }
 
 try {
@@ -212,11 +295,11 @@ try {
     if (Test-SpeechTrainer) {
         Write-Host "训练器已经在运行，正在打开浏览器。"
         Start-Process $AppUrl
-        Set-Content -Path $LaunchStatusFile -Value "ready" -Encoding ASCII
+        Set-Content -LiteralPath $LaunchStatusFile -Value "ready" -Encoding ASCII
         return
     }
 
-    if (Test-Path (Join-Path $BackendDir ".env")) {
+    if (Test-Path -LiteralPath (Join-Path $BackendDir ".env")) {
         & attrib.exe +h (Join-Path $BackendDir ".env") 2>$null | Out-Null
     }
 
@@ -236,10 +319,10 @@ try {
         "--host", "127.0.0.1",
         "--port", [string]$Port
     )
-    $process = Start-Process -FilePath $VenvPython -ArgumentList $arguments `
+    $process = Start-Process -FilePath $BundledPython -ArgumentList $arguments `
         -WorkingDirectory $BackendDir -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput $StdoutLog -RedirectStandardError $StderrLog
-    Set-Content -Path $PidFile -Value $process.Id -Encoding ASCII
+    Set-Content -LiteralPath $PidFile -Value $process.Id -Encoding ASCII
 
     $ready = $false
     for ($attempt = 0; $attempt -lt 60; $attempt += 1) {
@@ -252,8 +335,8 @@ try {
     }
     if (-not $ready) {
         if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
-        Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
-        $tail = if (Test-Path $StderrLog) { Get-Content $StderrLog -Tail 20 } else { @() }
+        Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
+        $tail = if (Test-Path -LiteralPath $StderrLog) { Get-Content -LiteralPath $StderrLog -Tail 20 } else { @() }
         throw "启动失败。最近日志：`n$($tail -join "`n")"
     }
 
@@ -261,7 +344,7 @@ try {
     Write-Host "启动成功：$AppUrl" -ForegroundColor Green
     Write-Host "关闭浏览器不会停止服务；需要停止时双击「停止训练器.cmd」。"
     Start-Process $AppUrl
-    Set-Content -Path $LaunchStatusFile -Value "ready" -Encoding ASCII
+    Set-Content -LiteralPath $LaunchStatusFile -Value "ready" -Encoding ASCII
 }
 catch {
     Write-Host ""

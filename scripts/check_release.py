@@ -16,6 +16,7 @@ MAX_FILE_BYTES = 5 * 1024 * 1024
 
 REQUIRED_FILES = {
     ".github/workflows/ci.yml",
+    "CHANGELOG.md",
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
     "LICENSE",
@@ -56,6 +57,9 @@ SECRET_PATTERNS = {
     "non-empty dotenv secret": re.compile(
         r"(?mi)^[ \t]*(?:LLM|ASR|TTS|OPENAI|DEEPSEEK|DASHSCOPE)_"
         r"(?:API_KEY|API_SECRET)[ \t]*=[ \t]*[^ \t\r\n#][^\r\n]*$"
+    ),
+    "personal home path": re.compile(
+        r"(?<!https:)/(?:Users|home)/[^/\s]+/|[A-Za-z]:\\Users\\[^\\\r\n]+\\"
     ),
 }
 

@@ -16,7 +16,7 @@
 - **实时弱提示**：说话过程中提示口癖、模糊措辞、连续重复、语速和停顿问题，尽量不打断表达。
 - **共享分析核心**：三个场景复用同一套收音、转写、文本和声音分析链路。
 - **场景化评价**：面试、工作汇报和演讲使用不同的语义评价维度，而不是简单更换提示词。
-- **证据优先**：确定性指标由规则和声音信号计算；语义评价需要引用训练原话或明确事实。
+- **证据优先**：确定性指标展示用户可读的计算依据；语义评价需要引用训练原话或明确事实。
 - **本地数据**：配置、训练记录和报告默认保存在本机 SQLite 数据库中。
 
 ## 训练场景
@@ -171,7 +171,7 @@ cd ..
 python3 scripts/check_release.py --history
 ```
 
-详细的一阶段范围和发布门槛见 [docs/phase-1-open-source-readiness.md](docs/phase-1-open-source-readiness.md)，GitHub 草稿与公开发布步骤见 [.github/RELEASE_CHECKLIST.md](.github/RELEASE_CHECKLIST.md)。
+详细的一阶段范围和发布门槛见 [docs/phase-1-open-source-readiness.md](docs/phase-1-open-source-readiness.md)，GitHub 草稿与公开发布步骤见 [.github/RELEASE_CHECKLIST.md](.github/RELEASE_CHECKLIST.md) 和 [GitHub 上线执行单](docs/github-launch.md)。
 
 ## 贡献与安全
 
@@ -202,9 +202,9 @@ python3 scripts/check_release.py --history
 ## 当前路线
 
 1. 扩充面试、汇报和演讲自发口语对比录音，继续校准连贯性与节奏标签。
-2. 将实时弱提示做成可关闭、可回看的低干扰交互。
-3. 统一外部 AI 请求的超时、取消、错误提示和后台任务释放。
-4. 在私有 GitHub 仓库完成 macOS/Linux/Windows 的干净安装与发布演练。
+2. 在私有 GitHub 仓库完成 macOS/Linux/Windows 的干净安装与发布演练。
+3. 根据首批真实使用反馈校准提示频率、面试覆盖和报告建议。
+4. 准备公开仓库的社交预览图、短演示片和首发传播素材。
 
 ## 许可证
 

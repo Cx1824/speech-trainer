@@ -28,6 +28,11 @@ cd ../backend
 - `SpeechTrainer-Windows-Test-YYYYMMDD.zip`
 - 同名 `.sha256` 校验文件
 
+打包器会下载并固定校验 CPython 3.12 Windows x64 运行时，同时为 Windows x64
+预下载所有 Python wheels，并把两个经过上游 SHA-256 校验的语音模型写入好友
+测试包。构建缓存位于 `artifacts/runtime-cache/`，不会加入 Git。ZIP 内的运行时、
+依赖和模型文件都会在构建后重新校验。
+
 ## 隐私边界
 
 打包器只读取配置表中的 DeepSeek LLM 配置，不复制源数据库。以下内容会被构建后
@@ -46,10 +51,11 @@ DeepSeek Key 只能存在于 ZIP 内的 `backend/.env`。配置 API 仍只返回
 
 Windows 10/11 64 位用户解压后双击 `启动训练器.cmd`。首次运行会：
 
-1. 检测 Python 3.11/3.12；没有时通过 winget 安装 Python 3.12；
-2. 创建包内独立虚拟环境并安装后端依赖；
-3. 下载并校验约 300 MB 本地语音模型；
+1. 校验并解压包内固定的 CPython 3.12.14 Windows x64 运行时；
+2. 仅从包内 wheel 安装后端依赖，不访问 PyPI；
+3. 校验包内两个本地语音模型，不访问 GitHub；
 4. 在 `127.0.0.1:17860` 启动单进程应用并打开浏览器。
 
-生产前端由 FastAPI 直接托管，Windows 运行时不需要 Node.js。启动器只停止自己
-记录并验证过的虚拟环境进程；端口冲突时不会结束其他项目。
+测试电脑不需要预装 Python、winget 或 Node.js，启动过程也不会安装或修改系统
+Python。生产前端由 FastAPI 直接托管。启动器只停止自己记录并验证过的包内
+Python 进程；端口冲突时不会结束其他项目。

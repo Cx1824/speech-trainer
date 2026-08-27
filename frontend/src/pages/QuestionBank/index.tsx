@@ -88,7 +88,12 @@ export default function QuestionBank() {
               </Space>
             } extra={
               <Popconfirm title="确认删除？" onConfirm={() => remove(i)}>
-                <Button danger size="small" icon={<DeleteOutlined />} />
+                <Button
+                  danger
+                  size="small"
+                  icon={<DeleteOutlined aria-hidden="true" />}
+                  aria-label={`删除题目：${q.content}`}
+                />
               </Popconfirm>
             }>
               {q.intent && <span style={{ color: '#888', marginRight: 16 }}>考察：{q.intent}</span>}

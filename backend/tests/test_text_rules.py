@@ -110,6 +110,20 @@ def test_semantic_repetition_detects_duplicate_sentences_inside_one_asr_final():
     }]
 
 
+def test_semantic_repetition_detects_concise_restatement_without_new_information():
+    first = "开始说大城市漂泊的生活。"
+
+    match = detect_semantic_repetition("在大城市漂泊。", [first])
+
+    assert match is not None
+    assert match["previous_sentence"] == first
+    assert match["current_sentence"] == "在大城市漂泊。"
+    assert detect_semantic_repetition(
+        "在大城市漂泊让我学会独立。",
+        [first],
+    ) is None
+
+
 def test_semantic_repetition_still_detects_numeric_claim_after_two_sentences():
     first = "这次项目最终为公司挽回损失1000万元。"
     history = [

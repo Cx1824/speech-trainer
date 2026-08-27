@@ -33,6 +33,7 @@ def test_render_html_escapes_user_and_model_content() -> None:
                 "score": 80,
                 "weight": 25,
                 "feedback": "<img src=x onerror=alert(1)>",
+                "evidence": ["真实发言 8 秒", "<script>证据</script>"],
             }
         ],
         "expression_metrics": {
@@ -79,6 +80,8 @@ def test_render_html_escapes_user_and_model_content() -> None:
     assert "可能来自&lt;强调&gt;" in html
     assert "请结合&lt;回听&gt;判断" in html
     assert "判断依据" in html
+    assert "真实发言 8 秒" in html
+    assert "&lt;script&gt;证据&lt;/script&gt;" in html
     assert "0.0520" not in html
     assert "&lt;em&gt;说明&lt;/em&gt;" not in html
     assert "关键任务约束" in html

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -88,3 +89,22 @@ async def test_timed_deadlines_wait_for_grace_before_hard_stop() -> None:
         "time_up",
         "hard_time_up",
     ]
+
+
+@pytest.mark.asyncio
+async def test_session_owned_tasks_are_cancelled_and_awaited() -> None:
+    tasks: set[asyncio.Task] = set()
+    cancelled = asyncio.Event()
+
+    async def pending() -> None:
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.set()
+
+    voice_ws._track_task(tasks, pending())
+    await asyncio.sleep(0)
+    await voice_ws._cancel_tasks(tasks)
+
+    assert cancelled.is_set()
+    assert not tasks

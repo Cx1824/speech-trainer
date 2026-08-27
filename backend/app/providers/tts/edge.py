@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from app.core.exceptions import ProviderError
@@ -22,6 +23,7 @@ from app.schemas import ProviderConfigIn
 logger = logging.getLogger(__name__)
 
 DEFAULT_VOICE = "zh-CN-YunjianNeural"
+EDGE_TTS_TIMEOUT_SECONDS = 30.0
 
 # 常用中文音色（设置页下拉用）
 EDGE_VOICES = [
@@ -54,15 +56,23 @@ class EdgeTTS(BaseTTSProvider):
         if not text:
             return b""
         try:
-            comm = edge_tts.Communicate(text, voice or self.voice)
-            chunks: list[bytes] = []
-            async for ch in comm.stream():
-                if ch["type"] == "audio":
-                    chunks.append(ch["data"])
-            audio = b"".join(chunks)
+            async def _collect_audio() -> bytes:
+                comm = edge_tts.Communicate(text, voice or self.voice)
+                chunks: list[bytes] = []
+                async for ch in comm.stream():
+                    if ch["type"] == "audio":
+                        chunks.append(ch["data"])
+                return b"".join(chunks)
+
+            audio = await asyncio.wait_for(
+                _collect_audio(),
+                timeout=EDGE_TTS_TIMEOUT_SECONDS,
+            )
             if not audio:
                 raise ProviderError("Edge TTS 返回空音频")
             return audio
+        except TimeoutError as e:
+            raise ProviderError("Edge TTS 连接超时，请稍后重试") from e
         except ProviderError:
             raise
         except Exception as e:

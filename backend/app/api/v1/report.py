@@ -188,6 +188,9 @@ async def export_pdf(
             if ax.get("feedback"):
                 line += f" —— {_escape(ax['feedback'])}"
             story.append(Paragraph(line, body))
+            for evidence in ax.get("evidence", []):
+                if isinstance(evidence, str) and evidence.strip():
+                    story.append(Paragraph(f"· 判断依据：{_escape(evidence)}", body))
         story.append(Spacer(1, 8))
 
         story.append(Paragraph("表达维度", h2))
@@ -284,7 +287,18 @@ def _render_html(report: dict) -> str:
         f"{axis['score'] if axis.get('score') is not None else '—'} / 100"
         f"（权重 {axis['weight']}%）"
         f"{' — ' + _escape(axis['feedback']) if axis.get('feedback') else ''}"
-        "</li>"
+        + (
+            "<ul>"
+            + "".join(
+                f"<li>判断依据：{_escape(item)}</li>"
+                for item in axis.get("evidence", [])
+                if isinstance(item, str) and item.strip()
+            )
+            + "</ul>"
+            if axis.get("evidence")
+            else ""
+        )
+        + "</li>"
         for axis in report.get("axes", [])
     )
     constraints_html = "".join(

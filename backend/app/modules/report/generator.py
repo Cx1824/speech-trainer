@@ -240,6 +240,20 @@ async def _build_report(db: AsyncSession, sid: str) -> dict[str, Any]:
         pack.evaluation.score_gates,
     )
 
+    signal_details = _build_signal_axis_details(
+        scores=signal_scores,
+        total_chars=total_chars,
+        filler_total=sum(filler_counter.values()),
+        repetition_rate=all_res.repetition_rate,
+        expression_break_count=len(all_res.expression_breaks),
+        speech_rate=speech_rate,
+        speech_duration=speech_duration,
+        hesitation_count=hesitation_count,
+        hesitation_rate=hesitation_rate,
+        long_pause_count=long_pause_count,
+        long_pause_rate=long_pause_rate,
+    )
+
     axes = []
     for axis in pack.evaluation.axes:
         entry: dict[str, Any] = {
@@ -271,6 +285,14 @@ async def _build_report(db: AsyncSession, sid: str) -> dict[str, Any]:
                         else ""
                     ),
                     "evidence": valid_evidence,
+                }
+            )
+        elif axis.signal_key:
+            detail = signal_details.get(axis.signal_key, {})
+            entry.update(
+                {
+                    "feedback": detail.get("feedback", ""),
+                    "evidence": detail.get("evidence", []),
                 }
             )
         axes.append(entry)
@@ -460,6 +482,84 @@ def _build_signal_evidence(
         lines.append(f"- 快速音高波动：{avg_jitter:.4f}（实验信号，不作心理解释）")
     lines.append("- 声音状态：不生成稳定或紧张综合分")
     return "\n".join(lines)
+
+
+def _build_signal_axis_details(
+    *,
+    scores: dict[str, float | None],
+    total_chars: int,
+    filler_total: int,
+    repetition_rate: float,
+    expression_break_count: int,
+    speech_rate: float,
+    speech_duration: float | None,
+    hesitation_count: int | None,
+    hesitation_rate: float | None,
+    long_pause_count: int | None,
+    long_pause_rate: float | None,
+) -> dict[str, dict[str, Any]]:
+    """把确定性评分转换为用户可核对的结论与依据。"""
+
+    continuity_score = scores.get("continuity")
+    if continuity_score is None:
+        continuity_feedback = "有效发言不足，暂不能评价表达连贯性。"
+    elif continuity_score >= 85:
+        continuity_feedback = "表达整体连贯，明确口癖、紧邻重复和局部断裂较少。"
+    elif continuity_score >= 70:
+        continuity_feedback = "表达基本连贯，少量口癖、重复或局部断裂影响了顺畅度。"
+    else:
+        continuity_feedback = "口癖、紧邻重复或局部断裂较集中，建议先缩短句子再完整表达。"
+
+    pacing_score = scores.get("pacing")
+    if pacing_score is None:
+        pacing_feedback = "缺少有效发言时长，暂不能评价语速与节奏。"
+    elif pacing_score >= 85:
+        pacing_feedback = "语速处于清晰表达区间，未发现有文本断裂佐证的明显节奏问题。"
+    elif pacing_score >= 70:
+        pacing_feedback = "语速或有断裂佐证的停顿略有波动，可通过分句和换气改善。"
+    else:
+        pacing_feedback = "语速或有断裂佐证的停顿偏离较明显，建议按信息点分句并留出换气。"
+
+    pacing_evidence = (
+        [
+            f"真实发言 {speech_duration:.1f} 秒，平均语速 {speech_rate:.0f} 字/分。",
+            (
+                f"正文短停顿 {hesitation_count} 次"
+                + (
+                    f"（{hesitation_rate:.1f} 次/分钟）"
+                    if hesitation_rate is not None
+                    else ""
+                )
+                + "；"
+                + f"正文长停顿 {long_pause_count} 次"
+                + (
+                    f"（{long_pause_rate:.1f} 次/分钟）"
+                    if long_pause_rate is not None
+                    else ""
+                )
+                + "。"
+            )
+            if hesitation_count is not None and long_pause_count is not None
+            else "停顿数据不足，本项仅依据真实发言语速。",
+            "停顿只有同时出现局部表达断裂时才影响节奏分，首尾等待不计入。",
+        ]
+        if speech_duration is not None and speech_rate > 0
+        else ["未记录到可用的真实发言时长，本维度不评分。"]
+    )
+
+    return {
+        "continuity": {
+            "feedback": continuity_feedback,
+            "evidence": [
+                f"有效表达 {total_chars} 字；明确口癖 {filler_total} 次。",
+                f"紧邻用词重复率 {repetition_rate:.1%}；局部表达断裂 {expression_break_count} 处。",
+            ],
+        },
+        "pacing": {
+            "feedback": pacing_feedback,
+            "evidence": pacing_evidence,
+        },
+    }
 
 
 def _aggregate_emotion(dialogues, all_text: str):

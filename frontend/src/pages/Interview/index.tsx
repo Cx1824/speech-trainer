@@ -5,7 +5,11 @@ import {
 } from 'antd'
 import { UploadOutlined } from '@ant-design/icons'
 import { apiService } from '@/services/api'
-import { useVoiceSession } from '@/hooks/useVoiceSession'
+import {
+  useVoiceSession,
+  type FeedbackItem,
+  type SemanticRepeatPair,
+} from '@/hooks/useVoiceSession'
 import { getDisplayedFillerTotals } from '@/utils/liveFillerTotals'
 import EmotionIndicator, { type EmotionData } from '@/components/EmotionIndicator'
 import {
@@ -90,6 +94,10 @@ export default function Interview() {
   const [profiles, setProfiles] = useState<ProfileItem[]>([])
   const [saveName, setSaveName] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
+  const [showLiveCoach, setShowLiveCoach] = useState(true)
+  const [feedbackReviewOpen, setFeedbackReviewOpen] = useState(false)
+  const [feedbackHistory, setFeedbackHistory] = useState<FeedbackItem[]>([])
+  const feedbackHistoryIdsRef = useRef(new Set<string>())
 
   const [emotion, setEmotion] = useState<EmotionData | null>(null)
   const selectedInterviewMode = Form.useWatch('interview_mode', form) || requestedInterviewMode
@@ -151,6 +159,17 @@ export default function Interview() {
     beginSoloPractice,
     finishStage: finishVoiceStage,
   } = voice
+
+  useEffect(() => {
+    const additions = voice.state.feedbacks.filter((item) => {
+      if (feedbackHistoryIdsRef.current.has(item.id)) return false
+      feedbackHistoryIdsRef.current.add(item.id)
+      return true
+    })
+    if (additions.length > 0) {
+      setFeedbackHistory((current) => [...current, ...additions].slice(-100))
+    }
+  }, [voice.state.feedbacks])
 
   const loadProfiles = useCallback(() => {
     apiService.listProfiles().then(setProfiles).catch(() => {})
@@ -395,6 +414,10 @@ export default function Interview() {
       await apiService.startInterview(sessionId)
       setStartedAt(null)
       autoFinishedRef.current = false
+      setShowLiveCoach(true)
+      setFeedbackReviewOpen(false)
+      setFeedbackHistory([])
+      feedbackHistoryIdsRef.current.clear()
       setSid(sessionId)
       setPhase('running')
       message.success(`${scenarioMeta.name}开始`)
@@ -1088,6 +1111,15 @@ export default function Interview() {
             <span className="live-status-copy">{meta.label}</span>
           </Space>
           <Space className="training-toolbar-actions" wrap>
+            <Button
+              aria-pressed={showLiveCoach}
+              onClick={() => setShowLiveCoach((current) => !current)}
+            >
+              {showLiveCoach ? '隐藏建议' : '显示建议'}
+            </Button>
+            <Button onClick={() => setFeedbackReviewOpen(true)}>
+              提示回看{feedbackHistory.length ? ` ${feedbackHistory.length}` : ''}
+            </Button>
             {isTimed && (
               <Button
                 type="primary"
@@ -1221,15 +1253,17 @@ export default function Interview() {
           </div>
         </div>
 
-        <section className="live-feedback-strip" aria-label="本次训练累计实时反馈">
-          <div className="live-action-block">
-            <span className="live-feedback-kicker">当前建议 + 下一句</span>
-            <strong>{coachPanel.next}</strong>
-            <p><span>下一句</span>{coachPanel.formula}</p>
-            <span className="live-feedback-a11y" role="status" aria-live="polite">
-              {coachPanel.label}。{coachPanel.next}。下一句怎么说：{coachPanel.formula}
-            </span>
-          </div>
+        <section className={`live-feedback-strip${showLiveCoach ? '' : ' is-coach-hidden'}`} aria-label="本次训练累计实时反馈">
+          {showLiveCoach && (
+            <div className="live-action-block">
+              <span className="live-feedback-kicker">当前建议 + 下一句</span>
+              <strong>{coachPanel.next}</strong>
+              <p><span>下一句</span>{coachPanel.formula}</p>
+              <span className="live-feedback-a11y" role="status" aria-live="polite">
+                {coachPanel.label}。{coachPanel.next}。下一句怎么说：{coachPanel.formula}
+              </span>
+            </div>
+          )}
           <div className="live-metric-block live-metric-repeat">
             <div className="live-metric-heading">
               <span>重复意思 · 累计</span>
@@ -1291,9 +1325,78 @@ export default function Interview() {
             </span>
           </div>
         </footer>
+
+        <Modal
+          title="本次提示回看"
+          open={feedbackReviewOpen}
+          footer={null}
+          width={620}
+          onCancel={() => setFeedbackReviewOpen(false)}
+        >
+          <FeedbackReviewList
+            feedbacks={feedbackHistory}
+            semanticRepeats={vs.semanticRepeats}
+          />
+        </Modal>
       </div>
     )
   }
+}
+
+const FEEDBACK_LABELS: Record<FeedbackItem['kind'], string> = {
+  filler: '口头禅',
+  repeat: '连续重复',
+  hedge: '表达不够明确',
+  uncertain: '结论不够确定',
+  long_sentence: '句子偏长',
+  silence: '停顿偏长',
+  no_breath: '建议换气',
+  fast_run: '语速偏快',
+}
+
+function FeedbackReviewList({
+  feedbacks,
+  semanticRepeats,
+}: {
+  feedbacks: FeedbackItem[]
+  semanticRepeats: SemanticRepeatPair[]
+}) {
+  if (feedbacks.length === 0 && semanticRepeats.length === 0) {
+    return <p className="live-feedback-review-empty">还没有触发提示。开始表达后，这里会保留本次训练的提示记录。</p>
+  }
+
+  return (
+    <div className="live-feedback-review">
+      {semanticRepeats.length > 0 && (
+        <section>
+          <h3>重复意思</h3>
+          <ol className="live-feedback-review-list is-semantic">
+            {[...semanticRepeats].reverse().map((item) => (
+              <li key={`${item.first}\u0000${item.second}`}>
+                <span>合并表达</span>
+                <strong>“{item.first}” ↔ “{item.second}”</strong>
+                <p>下一句补充新的动作、数据或影响，不再复述同一结论。</p>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+      {feedbacks.length > 0 && (
+        <section>
+          <h3>用词与节奏</h3>
+          <ol className="live-feedback-review-list">
+            {[...feedbacks].reverse().map((feedback) => (
+              <li key={feedback.id}>
+                <span>{FEEDBACK_LABELS[feedback.kind]}</span>
+                <strong>{feedback.word ? `“${feedback.word}”` : feedback.sentence || '本句表达'}</strong>
+                {feedback.advice && <p>{feedback.advice}</p>}
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+    </div>
+  )
 }
 
 function MarkedSubtitleToken({

@@ -19,6 +19,8 @@ vite.config.ts.timestamp-*
 /.impeccable/
 /.acceptance/
 /artifacts/
+/scripts/promo_video/build_commercial_v*.sh
+/scripts/promo_video/build_voiceover_v*.sh
 /screenshots/
 /tmp/
 /test-results/

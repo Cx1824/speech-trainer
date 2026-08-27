@@ -19,6 +19,8 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import Coroutine
+from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -55,6 +57,27 @@ router = APIRouter()
 # 活动连接用事件告知 REST：内存中的最后一句已经持久化，可以安全完成会话。
 _voice_flush_events: dict[str, asyncio.Event] = {}
 OVERTIME_GRACE_SECONDS = 10 * 60
+TTS_SENTENCE_TIMEOUT_SECONDS = 45.0
+
+
+def _track_task(
+    tasks: set[asyncio.Task],
+    coroutine: Coroutine[Any, Any, Any],
+) -> asyncio.Task:
+    """Create a session-owned task and retain it until completion."""
+    task = asyncio.create_task(coroutine)
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+    return task
+
+
+async def _cancel_tasks(tasks: set[asyncio.Task]) -> None:
+    """Cancel and await every task owned by one voice connection."""
+    pending = list(tasks)
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 def _register_voice_flush(sid: str) -> asyncio.Event:
@@ -312,6 +335,7 @@ async def voice_ws(websocket: WebSocket, sid: str):
             return
 
         voice_flush_event = _register_voice_flush(sid)
+        background_tasks: set[asyncio.Task] = set()
 
         # 个人声学基线：校准过才有
         try:
@@ -349,12 +373,12 @@ async def voice_ws(websocket: WebSocket, sid: str):
             nonlocal last_metrics_push
             latest_partial_holder[0] = t
             _safe_send(websocket, envelope(
-                ServerMsgType.SPEECH_RECOGNIZED, text=t, is_final=False))
+                ServerMsgType.SPEECH_RECOGNIZED, text=t, is_final=False), background_tasks)
             try:
                 # ① 词级即时反馈：口癖/模糊词说出口 ~1s 内提示（含冷却）
                 for fb in live_engine.on_partial(t):
                     _safe_send(websocket, envelope(
-                        ServerMsgType.LIVE_FEEDBACK, **fb))
+                        ServerMsgType.LIVE_FEEDBACK, **fb), background_tasks)
                 live_chars_holder[0] = len(t)  # 节奏检测用（当前句字数）
                 # ② 实时指标（300ms 节流）：语速（字/发音秒）。声音波动、
                 # 卡顿与节奏不再合并为实时“紧张度”。
@@ -380,7 +404,7 @@ async def voice_ws(websocket: WebSocket, sid: str):
                     speech_rate_level=_rate_level(rate),
                     tension_score=None,
                     speech_sec=round(live_tracker.speech_sec, 1),
-                ))
+                ), background_tasks)
             except Exception:
                 logger.debug("live_metrics 推送失败", exc_info=True)
 
@@ -414,7 +438,7 @@ async def voice_ws(websocket: WebSocket, sid: str):
             live_tracker.reset_speech_stats() # 当前句统计归零，回答级累计保留
             live_chars_holder[0] = 0
             _safe_send(websocket, envelope(
-                ServerMsgType.SPEECH_RECOGNIZED, text=t, is_final=True))
+                ServerMsgType.SPEECH_RECOGNIZED, text=t, is_final=True), background_tasks)
             try:
                 text_res = analyze_text(t)
                 # 声学特征（音频不足 0.5s 时 feats=None，回落纯文本判定）
@@ -461,6 +485,7 @@ async def voice_ws(websocket: WebSocket, sid: str):
                 _safe_send(
                     websocket,
                     envelope(ServerMsgType.ANALYSIS_UPDATE, **sentence_analysis),
+                    background_tasks,
                 )
             except Exception:
                 logger.exception("句子级分析失败")
@@ -496,7 +521,10 @@ async def voice_ws(websocket: WebSocket, sid: str):
             asr.on_partial = _on_asr_partial
             asr.on_final = _on_asr_final
             asr.on_error = lambda m: _safe_send(
-                websocket, envelope(ServerMsgType.ERROR, message=f"ASR 错误：{m}"))
+                websocket,
+                envelope(ServerMsgType.ERROR, message=f"ASR 错误：{m}"),
+                background_tasks,
+            )
             await asr.start()
         except Exception as e:
             _mark_voice_flushed(sid, voice_flush_event)
@@ -511,20 +539,20 @@ async def voice_ws(websocket: WebSocket, sid: str):
         # 计时零点=开场白播完（前端发 begin_timer），而非连接时刻——
         # 避免 LLM 生成 + TTS 播报的十几秒被计入限时，用户还没开口倒计时已跑掉。
         # finish_stage / commit_answer 会兜底补启动（开场白没播就跳阶段的极端情况）。
-        timer_task: asyncio.Task | None = None
         timer_started = False
         timer_limit_min = 0
 
         def _start_timer() -> bool:
             """惰性启动倒计时 task（幂等：已启动则跳过）。返回是否为限时场景。"""
-            nonlocal timer_task, timer_started
+            nonlocal timer_started
             if timer_limit_min <= 0:
                 return False
             if timer_started:
                 return True
             timer_started = True
 
-            timer_task = asyncio.create_task(
+            _track_task(
+                background_tasks,
                 _send_timed_deadlines(websocket, timer_limit_min),
             )
             return True
@@ -564,7 +592,11 @@ async def voice_ws(websocket: WebSocket, sid: str):
                                 base_rate=base_rate,
                                 speaking=True,
                             ):
-                                _safe_send(websocket, envelope(ServerMsgType.LIVE_FEEDBACK, **fb))
+                                _safe_send(
+                                    websocket,
+                                    envelope(ServerMsgType.LIVE_FEEDBACK, **fb),
+                                    background_tasks,
+                                )
                     elif "text" in msg and msg["text"]:
                         try:
                             client_message = json.loads(msg["text"])
@@ -587,6 +619,7 @@ async def voice_ws(websocket: WebSocket, sid: str):
                                 latest_partial_holder=latest_partial_holder,
                                 last_committed_holder=last_committed_holder,
                                 voice_flush_event=voice_flush_event,
+                                background_tasks=background_tasks,
                             )
                             if client_message.get("type") in {
                                 "commit_answer", "finish_stage", "end_interview",
@@ -600,8 +633,7 @@ async def voice_ws(websocket: WebSocket, sid: str):
         except Exception:
             logger.exception("voice ws 异常")
         finally:
-            if timer_task and not timer_task.done():
-                timer_task.cancel()
+            await _cancel_tasks(background_tasks)
             try:
                 await _flush_pending_answer(
                     websocket,
@@ -625,10 +657,18 @@ async def voice_ws(websocket: WebSocket, sid: str):
             logger.info("Voice WS disconnected: sid=%s", sid)
 
 
-def _safe_send(websocket: WebSocket, text: str) -> None:
+def _safe_send(
+    websocket: WebSocket,
+    text: str,
+    background_tasks: set[asyncio.Task] | None = None,
+) -> None:
     """从 ASR 回调（同步上下文）异步发送消息。"""
     try:
-        asyncio.create_task(websocket.send_text(text))
+        if background_tasks is None:
+            task = asyncio.create_task(websocket.send_text(text))
+            task.add_done_callback(lambda completed: completed.exception() if not completed.cancelled() else None)
+        else:
+            _track_task(background_tasks, websocket.send_text(text))
     except RuntimeError:
         pass
 
@@ -648,6 +688,7 @@ async def _handle_json(
     latest_partial_holder: list[str] | None = None,
     last_committed_holder: list[str] | None = None,
     voice_flush_event: asyncio.Event | None = None,
+    background_tasks: set[asyncio.Task] | None = None,
 ) -> None:
     try:
         msg = json.loads(raw)
@@ -683,9 +724,10 @@ async def _handle_json(
             baseline=baseline,
             smoother=smoother,
             sentence_analyses=sentence_analyses,
+            background_tasks=background_tasks,
         )
     elif mtype == "start_stage":
-        await _auto_next_question(websocket, db, sid)
+        await _auto_next_question(websocket, db, sid, background_tasks=background_tasks)
     elif mtype == "start_solo_stage":
         await _start_solo_stage(websocket, db, sid, start_timer)
     elif mtype == "skip_topic":
@@ -698,7 +740,7 @@ async def _handle_json(
         if session.status == "completed":
             await websocket.send_text(envelope(ServerMsgType.INTERVIEW_COMPLETED))
         else:
-            await _auto_next_question(websocket, db, sid)
+            await _auto_next_question(websocket, db, sid, background_tasks=background_tasks)
     elif mtype == "begin_timer":
         # 前端开场白播完：计时零点确认，从此刻起倒计时（非限时场景不回执）
         if start_timer and start_timer():
@@ -720,6 +762,7 @@ async def _handle_json(
             explicit_text=msg.get("payload", {}).get("text", ""),
             baseline=baseline,
             smoother=smoother,
+            background_tasks=background_tasks,
         )
     elif mtype == "end_interview":
         explicit_text = msg.get("payload", {}).get("text", "")
@@ -827,6 +870,7 @@ async def _finish_stage(
     explicit_text: str = "",
     baseline=None,
     smoother=None,
+    background_tasks: set[asyncio.Task] | None = None,
 ) -> None:
     """限时场景结束当前阶段：先落库本轮已说的内容，再推进阶段。"""
     await _flush_pending_answer(
@@ -849,13 +893,14 @@ async def _finish_stage(
         await websocket.send_text(envelope(ServerMsgType.INTERVIEW_COMPLETED))
         return
     # 推进后自动生成下一阶段的 AI 发言（如评审质询/主持人收尾）
-    await _auto_next_question(websocket, db, sid)
+    await _auto_next_question(websocket, db, sid, background_tasks=background_tasks)
 
 
 async def _commit_answer(
     websocket: WebSocket, db, sid: str, text: str,
     advance: bool = True, pcm_buffer=None, baseline=None, smoother=None,
     sentence_analyses: list[dict] | None = None,
+    background_tasks: set[asyncio.Task] | None = None,
 ) -> None:
     """提交回答（分析已逐句推送过）。advance=True 时自动生成下一题。"""
     if not text.strip():
@@ -920,10 +965,16 @@ async def _commit_answer(
     if not advance:
         return
     # 自动追问（核心：无需人工点下一题）
-    await _auto_next_question(websocket, db, sid)
+    await _auto_next_question(websocket, db, sid, background_tasks=background_tasks)
 
 
-async def _auto_next_question(websocket: WebSocket, db, sid: str) -> None:
+async def _auto_next_question(
+    websocket: WebSocket,
+    db,
+    sid: str,
+    *,
+    background_tasks: set[asyncio.Task] | None = None,
+) -> None:
     try:
         if await interview.should_advance(db, sid):
             session = await interview.advance_stage(db, sid)
@@ -963,27 +1014,54 @@ async def _auto_next_question(websocket: WebSocket, db, sid: str) -> None:
         )
         # 面试保留 AI 语音问答；汇报/演讲只保留文字提示，不要求配置 TTS。
         if pack.key == "interview":
-            asyncio.create_task(_stream_tts(websocket, db, text))
+            try:
+                tts_config = await load_provider_config(db, "tts")
+                tts_provider = get_tts(tts_config)
+            except Exception as error:
+                logger.warning("读取 TTS 配置失败（继续文字流程）：%s", error)
+                await websocket.send_text(envelope(
+                    ServerMsgType.AI_AUDIO_UNAVAILABLE,
+                    text=text,
+                    reason="AI 语音暂时不可用",
+                    can_continue=True,
+                ))
+            else:
+                if background_tasks is None:
+                    task = asyncio.create_task(
+                        _stream_tts(websocket, tts_provider, text)
+                    )
+                    task.add_done_callback(
+                        lambda completed: completed.exception()
+                        if not completed.cancelled()
+                        else None
+                    )
+                else:
+                    _track_task(
+                        background_tasks,
+                        _stream_tts(websocket, tts_provider, text),
+                    )
     except Exception as e:
         logger.exception("自动追问失败")
         await websocket.send_text(envelope(ServerMsgType.ERROR, message=f"生成失败：{e}"))
 
 
-async def _stream_tts(websocket: WebSocket, db, text: str) -> None:
+async def _stream_tts(websocket: WebSocket, provider, text: str) -> None:
     """分句合成推送：首句先行播放，其余并发合成、按原句顺序发送。
 
     串行合成时句间有"合成等待"空隙（AI 发言听起来一顿一顿）；
     并发起跑 + 按序发送让音频帧几乎无缝接续，总耗时≈首句合成时间。
     """
+    rest_tasks: list[asyncio.Task] = []
     try:
-        cfg = await load_provider_config(db, "tts")
-        provider = get_tts(cfg)
         fmt = "mp3" if getattr(provider, "name", "") == "edge" else "wav"
         sentences = _split_sentences(text)
         if not sentences:
             return
         # 首句：立即合成立即发（最低首响延迟）
-        first_audio = await provider.synthesize(sentences[0])
+        first_audio = await asyncio.wait_for(
+            provider.synthesize(sentences[0]),
+            timeout=TTS_SENTENCE_TIMEOUT_SECONDS,
+        )
         await websocket.send_text(envelope(
             ServerMsgType.TTS_AUDIO,
             audio=encode_audio(first_audio), format=fmt,
@@ -993,7 +1071,10 @@ async def _stream_tts(websocket: WebSocket, db, text: str) -> None:
             return
         # 其余句：并发合成（任务同时起跑），按原句顺序发送
         rest_tasks = [
-            asyncio.create_task(provider.synthesize(s))
+            asyncio.create_task(asyncio.wait_for(
+                provider.synthesize(s),
+                timeout=TTS_SENTENCE_TIMEOUT_SECONDS,
+            ))
             for s in sentences[1:]
         ]
         for i, task in enumerate(rest_tasks, start=1):
@@ -1028,3 +1109,9 @@ async def _stream_tts(websocket: WebSocket, db, text: str) -> None:
             ))
         except Exception:
             logger.debug("发送 AI 音频不可用通知失败", exc_info=True)
+    finally:
+        pending = [task for task in rest_tasks if not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)

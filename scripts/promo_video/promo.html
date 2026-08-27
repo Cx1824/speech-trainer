@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>表达能力训练器 · 24.5 秒产品段</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #070b13;
+      }
+      body {
+        display: grid;
+        place-items: center;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        background: #070b13;
+      }
+      #step, #reset, #render {
+        position: fixed;
+        width: 24px;
+        height: 24px;
+        left: 0;
+        top: 0;
+        opacity: 0.001;
+        pointer-events: auto;
+      }
+      #reset { left: 28px; }
+      #render { left: 56px; }
+      #ready, #frame, #progress {
+        position: fixed;
+        left: -9999px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="promo" width="1920" height="1080" aria-label="宣传片画面"></canvas>
+    <button id="step" aria-label="下一帧">下一帧</button>
+    <button id="reset" aria-label="重置帧">重置帧</button>
+    <button id="render" aria-label="导出全部帧">导出全部帧</button>
+    <span id="ready">loading</span>
+    <span id="frame">0</span>
+    <span id="progress">idle</span>
+    <script>
+      (() => {
+        const FPS = 15;
+        const DURATION = 24.5;
+        const canvas = document.getElementById('promo');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        const ready = document.getElementById('ready');
+        const step = document.getElementById('step');
+        const reset = document.getElementById('reset');
+        const render = document.getElementById('render');
+        const frameStatus = document.getElementById('frame');
+        const progressStatus = document.getElementById('progress');
+        const W = 1920;
+        const H = 1080;
+        let frame = 0;
+
+        const C = {
+          bg: '#070b13',
+          bg2: '#0a101b',
+          panel: '#0c1320',
+          line: '#24324a',
+          white: '#eff4ff',
+          muted: '#8793aa',
+          faint: '#526078',
+          lime: '#d8ff47',
+          red: '#ff665f',
+          blue: '#78aaff',
+          violet: '#9d78ff',
+        };
+
+        const home = new Image();
+        const live = new Image();
+        const report = new Image();
+        home.src = '/artifacts/promo-video-v1/home-real.png';
+        live.src = '/artifacts/promo-video-v1/live-empty-real.png';
+        report.src = '/artifacts/promo-video-v1/report-real.png';
+
+        const clamp = (n, a = 0, b = 1) => Math.max(a, Math.min(b, n));
+        const mix = (a, b, p) => a + (b - a) * p;
+        const easeOut = (p) => 1 - Math.pow(1 - clamp(p), 3);
+        const easeInOut = (p) => {
+          p = clamp(p);
+          return p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+        };
+        const pulse = (t, start, duration = 0.55) => {
+          const p = clamp((t - start) / duration);
+          return Math.sin(p * Math.PI) * (t >= start && t <= start + duration ? 1 : 0);
+        };
+        const reveal = (t, start, duration = 0.45) => easeOut((t - start) / duration);
+        const fadeWindow = (t, start, end, edge = 0.45) =>
+          clamp((t - start) / edge) * clamp((end - t) / edge);
+
+        function font(size, weight = 600, family = '"PingFang SC", "Microsoft YaHei", sans-serif') {
+          ctx.font = `${weight} ${size}px ${family}`;
+          ctx.textBaseline = 'alphabetic';
+        }
+
+        function fillText(text, x, y, size, color = C.white, weight = 600, alpha = 1) {
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          font(size, weight);
+          ctx.fillStyle = color;
+          ctx.fillText(text, x, y);
+          ctx.restore();
+        }
+
+        function trackedText(text, x, y, size, color, tracking = 6, alpha = 1) {
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          font(size, 700, 'Inter, "PingFang SC", sans-serif');
+          ctx.fillStyle = color;
+          let cursor = x;
+          for (const char of text) {
+            ctx.fillText(char, cursor, y);
+            cursor += ctx.measureText(char).width + tracking;
+          }
+          ctx.restore();
+        }
+
+        function roundedRect(x, y, w, h, radius, fill, stroke = null, alpha = 1) {
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.beginPath();
+          ctx.roundRect(x, y, w, h, radius);
+          if (fill) {
+            ctx.fillStyle = fill;
+            ctx.fill();
+          }
+          if (stroke) {
+            ctx.strokeStyle = stroke;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        function dot(x, y, r, color, alpha = 1) {
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        function arcLine(x1, y, x2, color, progress = 1, alpha = 1, bend = 10) {
+          const p = easeOut(progress);
+          const xe = mix(x1, x2, p);
+          const gradient = ctx.createLinearGradient(x1, y, x2, y);
+          gradient.addColorStop(0, color + '22');
+          gradient.addColorStop(0.18, color + 'cc');
+          gradient.addColorStop(0.65, color);
+          gradient.addColorStop(1, color + '33');
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.strokeStyle = gradient;
+          ctx.lineWidth = 5;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(x1, y);
+          ctx.quadraticCurveTo((x1 + xe) / 2, y + bend, xe, y);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        function tag(text, x, y, color, progress = 1, align = 'left') {
+          const p = easeOut(progress);
+          if (p <= 0) return;
+          font(22, 700);
+          const width = ctx.measureText(text).width + 34;
+          const left = align === 'right' ? x - width : x;
+          ctx.save();
+          ctx.globalAlpha = p;
+          ctx.translate(left + width / 2, y + 20);
+          ctx.scale(0.88 + p * 0.12, 0.88 + p * 0.12);
+          roundedRect(-width / 2, -20, width, 40, 20, C.bg2 + 'ee', color + '88');
+          dot(-width / 2 + 17, 0, 4.5, color);
+          fillText(text, -width / 2 + 29, 8, 21, color, 700);
+          ctx.restore();
+        }
+
+        function largeWord(text, x, y, size, color, progress, weight = 700) {
+          const p = easeOut(progress);
+          if (p <= 0) return;
+          ctx.save();
+          ctx.globalAlpha = p;
+          ctx.translate(x, y + (1 - p) * 34);
+          ctx.scale(0.96 + p * 0.04, 0.96 + p * 0.04);
+          fillText(text, 0, 0, size, color, weight);
+          ctx.restore();
+        }
+
+        function brandArcs(alpha = 1) {
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          const g1 = ctx.createLinearGradient(0, 0, W, 0);
+          g1.addColorStop(0, C.blue + '00');
+          g1.addColorStop(0.25, C.blue + 'bb');
+          g1.addColorStop(0.55, C.lime + '55');
+          g1.addColorStop(1, C.blue + '00');
+          ctx.strokeStyle = g1;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(0, 100);
+          ctx.quadraticCurveTo(W / 2, 250, W, 100);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(0, H - 96);
+          ctx.quadraticCurveTo(W / 2, H - 245, W, H - 96);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        function backgroundGlow(t, strength = 1) {
+          ctx.fillStyle = C.bg;
+          ctx.fillRect(0, 0, W, H);
+          const gx = 1000 + Math.sin(t * 0.4) * 120;
+          const gy = 420 + Math.cos(t * 0.33) * 60;
+          const radial = ctx.createRadialGradient(gx, gy, 0, gx, gy, 700);
+          radial.addColorStop(0, `rgba(36, 70, 133, ${0.16 * strength})`);
+          radial.addColorStop(0.55, `rgba(23, 45, 85, ${0.08 * strength})`);
+          radial.addColorStop(1, 'rgba(7, 11, 19, 0)');
+          ctx.fillStyle = radial;
+          ctx.fillRect(0, 0, W, H);
+        }
+
+        function drawHook(t) {
+          const alpha = fadeWindow(t, 0, 2.35, 0.3);
+          backgroundGlow(t, 1.25);
+          brandArcs(alpha * 0.7);
+          const p1 = reveal(t, 0.08, 0.42);
+          const p2 = reveal(t, 0.42, 0.55);
+          trackedText('REAL-TIME SPEECH COACH', 735, 300, 19, C.blue, 8, alpha * p1);
+          largeWord('你以为', 500, 485, 128, C.white, p1 * alpha, 700);
+          largeWord('自己说清楚了？', 500, 640, 128, C.lime, p2 * alpha, 700);
+          arcLine(503, 672, 1392, C.lime, reveal(t, 0.85, 0.7), alpha, 18);
+          dot(1432, 638, 8 + pulse(t, 1.15) * 9, C.red, alpha);
+          fillText('系统看到的，可能完全不同。', 716, 760, 30, C.muted, 500, alpha * reveal(t, 1.15, 0.45));
+        }
+
+        function drawLiveBase(t, alpha) {
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.drawImage(live, 0, 0, W, H);
+          ctx.restore();
+
+          // Clear the default empty-state copy and redraw a deterministic demo state.
+          const veil = ctx.createLinearGradient(0, 160, 0, 870);
+          veil.addColorStop(0, 'rgba(7,11,19,0.96)');
+          veil.addColorStop(0.5, 'rgba(7,11,19,0.99)');
+          veil.addColorStop(1, 'rgba(7,11,19,0.97)');
+          ctx.fillStyle = veil;
+          ctx.fillRect(0, 150, W, 720);
+          ctx.fillStyle = 'rgba(7,11,19,0.99)';
+          ctx.fillRect(205, 870, 1510, 110);
+          ctx.fillRect(1715, 870, 205, 110);
+          ctx.fillRect(1690, 995, 230, 84);
+          ctx.fillRect(285, 18, 150, 44);
+          dot(310, 40, 6, C.lime);
+          fillText('实时分析中', 327, 49, 17, C.lime, 650);
+          dot(1750, 1037, 4, C.lime);
+          fillText('语音流 · 正常', 1765, 1043, 14, C.muted, 600);
+        }
+
+        function drawCounters(t, y = 896) {
+          const counterP = reveal(t, 8.1, 0.5);
+          const items = [
+            { x: 742, valueX: 1147, label: '重复意思 · 累计', color: C.lime, at: 8.2 },
+            { x: 1218, valueX: 1400, label: '口头禅 · 累计', color: C.red, at: 5.0 },
+            { x: 1475, valueX: 1662, label: '连续重复 · 累计', color: C.blue, at: 5.8 },
+          ];
+          for (const item of items) {
+            fillText(item.label, item.x, y, 15, C.muted, 600);
+            const hit = reveal(t, item.at, 0.35);
+            const value = hit > 0.65 ? '1' : '0';
+            fillText(value, item.valueX, y + 10, 34, hit > 0.65 ? item.color : C.red, 800);
+            fillText('次', item.valueX + 25, y + 9, 14, C.muted, 500);
+          }
+          ctx.save();
+          ctx.strokeStyle = C.line;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(704, 871);
+          ctx.lineTo(704, 980);
+          ctx.moveTo(1196, 871);
+          ctx.lineTo(1196, 980);
+          ctx.moveTo(1452, 871);
+          ctx.lineTo(1452, 980);
+          ctx.stroke();
+          ctx.restore();
+          void counterP;
+        }
+
+        function drawAdvice(t) {
+          fillText('当前建议 + 下一句', 240, 900, 15, C.muted, 700);
+          const p = reveal(t, 8.45, 0.5);
+          const oldA = 1 - p;
+          fillText('先抛结论，再补数据、过程和下一步。', 240, 938, 23, C.white, 650, oldA);
+          fillText('不要重复结果，补一个量化证据。', 240, 938, 25, C.white, 700, p);
+          fillText('下一句', 240, 970, 15, C.muted, 600, p);
+          fillText('“上线后转化率提升了 18%。”', 306, 970, 18, C.lime, 700, p);
+        }
+
+        function drawLive(t) {
+          const alpha = fadeWindow(t, 1.72, 13.45, 0.55);
+          drawLiveBase(t, alpha);
+          if (alpha <= 0) return;
+
+          const baseX = 220;
+          largeWord('就是，', baseX, 335, 72, C.white, reveal(t, 2.15, 0.5) * alpha, 620);
+          largeWord('我、我', baseX, 480, 105, C.white, reveal(t, 3.05, 0.55) * alpha, 750);
+          largeWord('成功推动了', 520, 480, 92, C.white, reveal(t, 3.75, 0.7) * alpha, 700);
+          largeWord('项目落地。', 1090, 480, 110, C.lime, reveal(t, 4.55, 0.65) * alpha, 750);
+          largeWord('后来项目能够落地，', baseX, 622, 78, C.white, reveal(t, 6.05, 0.8) * alpha, 650);
+          largeWord('主要也是我推动的。', baseX, 750, 86, C.white, reveal(t, 7.25, 0.8) * alpha, 680);
+
+          const filler = reveal(t, 5.0, 0.42) * alpha;
+          tag('口头禅 · 1次', 425, 240, C.red, filler, 'right');
+          arcLine(baseX, 357, 397, C.red, filler, filler, 9);
+          dot(402, 356, 5 + pulse(t, 5.0) * 5, C.red, filler);
+
+          const stutter = reveal(t, 5.82, 0.42) * alpha;
+          tag('连续重复 · 1次', 500, 379, C.blue, stutter, 'right');
+          arcLine(baseX, 505, 498, C.blue, stutter, stutter, 13);
+          dot(503, 504, 5 + pulse(t, 5.82) * 5, C.blue, stutter);
+
+          const semantic = reveal(t, 8.45, 0.48) * alpha;
+          tag('重复意思 · 1次', 1100, 516, C.lime, semantic, 'right');
+          arcLine(baseX, 648, 1090, C.lime, semantic, semantic, 17);
+          dot(1096, 647, 5 + pulse(t, 8.45) * 6, C.lime, semantic);
+
+          drawAdvice(t);
+          drawCounters(t);
+
+          // Corrected sentence arrives as the noisy draft recedes.
+          const correction = clamp((t - 9.55) / 0.55);
+          if (correction > 0) {
+            ctx.save();
+            ctx.globalAlpha = easeInOut(correction);
+            ctx.fillStyle = 'rgba(7,11,19,0.985)';
+            ctx.fillRect(0, 150, W, 720);
+            trackedText('ONE FACT CHANGES THE ANSWER', 220, 290, 17, C.blue, 7, reveal(t, 9.6, 0.34));
+            largeWord('上线后，', 220, 485, 100, C.white, reveal(t, 9.85, 0.45), 670);
+            largeWord('转化率提升 18%', 220, 650, 138, C.lime, reveal(t, 10.35, 0.58), 780);
+            tag('建议已完成', 1565, 535, C.lime, reveal(t, 11.15, 0.35), 'right');
+            roundedRect(1240, 575, 325, 74, 18, C.panel + 'ee', C.lime + '66', reveal(t, 11.4, 0.32));
+            dot(1270, 612, 6, C.lime, reveal(t, 11.4, 0.32));
+            fillText('有结果，也有证据。', 1290, 622, 24, C.white, 650, reveal(t, 11.4, 0.32));
+            ctx.restore();
+          }
+        }
+
+        function drawReport(t) {
+          const alpha = fadeWindow(t, 12.9, 18.05, 0.55);
+          if (alpha <= 0) return;
+          const p = easeInOut(clamp((t - 13.15) / 4.5));
+          const scale = mix(1.02, 1.09, p);
+          const dw = W * scale;
+          const dh = H * scale;
+          const dx = -mix(0, 110, p);
+          const dy = -mix(0, 45, p);
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.drawImage(report, dx, dy, dw, dh);
+          ctx.restore();
+          const shade = ctx.createLinearGradient(0, 0, W, 0);
+          shade.addColorStop(0, 'rgba(7,11,19,0.02)');
+          shade.addColorStop(0.52, 'rgba(7,11,19,0.05)');
+          shade.addColorStop(1, 'rgba(7,11,19,0.82)');
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = shade;
+          ctx.fillRect(0, 0, W, H);
+          roundedRect(1175, 255, 610, 460, 30, 'rgba(8,13,23,0.91)', C.line, reveal(t, 13.55, 0.5));
+          trackedText('FROM SIGNAL TO EVIDENCE', 1230, 325, 17, C.blue, 6, alpha);
+          fillText('每一次提醒，', 1230, 423, 57, C.white, 700, alpha * reveal(t, 13.85, 0.42));
+          fillText('都有证据。', 1230, 500, 63, C.lime, 750, alpha * reveal(t, 14.15, 0.42));
+          roundedRect(1230, 555, 470, 82, 18, C.panel, C.line, alpha * reveal(t, 14.6, 0.35));
+          dot(1265, 596, 7, C.lime, alpha);
+          fillText('原话 → 信号 → 下一次练习', 1290, 606, 24, C.white, 650, alpha);
+          ctx.restore();
+        }
+
+        function drawReportDimensions(t) {
+          const alpha = fadeWindow(t, 16.0, 20.85, 0.45);
+          if (alpha <= 0) return;
+
+          backgroundGlow(t, 0.5);
+          ctx.save();
+          ctx.globalAlpha = alpha * 0.14;
+          ctx.drawImage(report, -35, -20, W * 1.07, H * 1.07);
+          ctx.restore();
+
+          const board = reveal(t, 16.05, 0.45) * alpha;
+          const ink = '#172033';
+          const sub = '#667085';
+          const paper = '#f4f6fa';
+          const paperLine = '#dfe4eb';
+          const scoreBlue = '#477df0';
+          const scoreGreen = '#2e9b72';
+
+          ctx.save();
+          ctx.globalAlpha = board;
+          ctx.translate(0, (1 - board) * 28);
+          roundedRect(105, 72, 1710, 936, 30, paper, null, board);
+          roundedRect(105, 72, 1710, 175, 30, C.panel, null, board);
+          ctx.fillStyle = C.panel;
+          ctx.fillRect(105, 187, 1710, 60);
+          fillText('一个总分，拆成四类能力证据。', 175, 170, 55, C.white, 720, board);
+          fillText('可核对信号 × 场景能力 × 原话证据', 175, 215, 22, C.muted, 600, board);
+          roundedRect(1510, 120, 215, 54, 27, C.lime, null, board);
+          fillText('示例报告 · 100%', 1548, 156, 19, C.bg, 760, board);
+          ctx.restore();
+
+          const axes = [
+            {
+              label: '表达连贯性',
+              desc: '口癖、紧邻重复与表达断裂',
+              score: 82,
+              weight: '20% 权重',
+              color: scoreBlue,
+              detail: '表达整体流畅；明确口癖共 3 次。',
+            },
+            {
+              label: '语速控制',
+              desc: '真实发言时长与正文停顿',
+              score: 76,
+              weight: '15% 权重',
+              color: scoreBlue,
+              detail: '188 字/分钟，节奏适中。',
+            },
+            {
+              label: '回答结构',
+              desc: '结论、论据与 STAR 结构',
+              score: 84,
+              weight: '30% 权重',
+              color: scoreGreen,
+              detail: '结论和结果清楚；补充决策取舍。',
+            },
+            {
+              label: '岗位匹配',
+              desc: '项目证据与岗位要求的相关度',
+              score: 73,
+              weight: '35% 权重',
+              color: scoreBlue,
+              detail: '结果相关；仍需说明为什么选这个方案。',
+            },
+          ];
+
+          axes.forEach((axis, index) => {
+            const rowP = reveal(t, 16.45 + index * 0.18, 0.32) * alpha;
+            const y = 280 + index * 124;
+            if (rowP <= 0) return;
+            ctx.save();
+            ctx.globalAlpha = rowP;
+            ctx.translate((1 - rowP) * 24, 0);
+            if (index > 0) {
+              ctx.strokeStyle = paperLine;
+              ctx.lineWidth = 1;
+              ctx.beginPath();
+              ctx.moveTo(175, y - 24);
+              ctx.lineTo(1745, y - 24);
+              ctx.stroke();
+            }
+            fillText(axis.weight, 175, y, 17, sub, 650, rowP);
+            fillText(axis.label, 175, y + 42, 31, ink, 720, rowP);
+            fillText(axis.desc, 420, y + 40, 20, sub, 550, rowP);
+            fillText(String(axis.score), 805, y + 35, 45, ink, 760, rowP);
+            roundedRect(885, y + 14, 275, 9, 4.5, paperLine, null, rowP);
+            roundedRect(885, y + 14, 275 * (axis.score / 100) * rowP, 9, 4.5, axis.color, null, rowP);
+            dot(1210, y + 24, 5, axis.color, rowP);
+            fillText(axis.detail, 1230, y + 32, 20, ink, 600, rowP);
+            ctx.restore();
+          });
+
+          const evidenceP = reveal(t, 17.55, 0.4) * alpha;
+          if (evidenceP > 0) {
+            roundedRect(175, 786, 965, 92, 16, '#e9eef8', null, evidenceP);
+            fillText('原话证据', 205, 823, 17, scoreBlue, 720, evidenceP);
+            fillText('“上线两周后，核心流程完成率从 62% 提升到 78%。”', 205, 858, 22, ink, 650, evidenceP);
+
+            fillText('声音与节奏参考', 1190, 815, 19, ink, 720, evidenceP);
+            fillText('中等可信度 · 不计分', 1512, 815, 16, sub, 650, evidenceP);
+            const voiceItems = [
+              ['声音起伏', '有一些起伏'],
+              ['表达流畅', '整体流畅'],
+              ['节奏变化', '较自然'],
+            ];
+            voiceItems.forEach((item, index) => {
+              const x = 1190 + index * 180;
+              fillText(item[0], x, 850, 15, sub, 600, evidenceP);
+              fillText(item[1], x, 877, 19, ink, 700, evidenceP);
+            });
+          }
+
+          const footerP = reveal(t, 18.25, 0.35) * alpha;
+          ctx.save();
+          ctx.globalAlpha = footerP;
+          ctx.strokeStyle = paperLine;
+          ctx.beginPath();
+          ctx.moveTo(175, 914);
+          ctx.lineTo(1745, 914);
+          ctx.stroke();
+          fillText('总分告诉你结果，维度与证据告诉你下一次怎么练。', 175, 962, 25, ink, 680, footerP);
+          fillText('表达信号 7 项  ·  能力评分 4 维  ·  声音参考 3 维', 1190, 962, 18, sub, 650, footerP);
+          ctx.restore();
+
+          // A single evidence scan ties the score rows to the underlying signals.
+          const scanP = clamp((t - 16.42) / 1.55);
+          const scanAlpha = Math.sin(scanP * Math.PI) * alpha * 0.58;
+          if (scanAlpha > 0) {
+            const scanY = mix(292, 736, easeInOut(scanP));
+            const scanGradient = ctx.createLinearGradient(155, 0, 1765, 0);
+            scanGradient.addColorStop(0, 'rgba(216,255,71,0)');
+            scanGradient.addColorStop(0.18, `rgba(216,255,71,${scanAlpha * 0.35})`);
+            scanGradient.addColorStop(0.52, `rgba(216,255,71,${scanAlpha})`);
+            scanGradient.addColorStop(0.82, `rgba(216,255,71,${scanAlpha * 0.35})`);
+            scanGradient.addColorStop(1, 'rgba(216,255,71,0)');
+            ctx.save();
+            ctx.strokeStyle = scanGradient;
+            ctx.lineWidth = 3;
+            ctx.shadowColor = C.lime;
+            ctx.shadowBlur = 18;
+            ctx.beginPath();
+            ctx.moveTo(155, scanY);
+            ctx.lineTo(1765, scanY);
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
+
+        function drawScope(t) {
+          const alpha = fadeWindow(t, 20.5, 22.55, 0.28);
+          if (alpha <= 0) return;
+          backgroundGlow(t, 0.65);
+          ctx.save();
+          ctx.globalAlpha = alpha * 0.06;
+          ctx.drawImage(home, 0, 0, W, H);
+          ctx.restore();
+          brandArcs(alpha * 0.6);
+          trackedText('ONE COACH / THREE REAL STAGES', 610, 270, 19, C.blue, 7, alpha);
+          const stages = [
+            { label: '模拟面试', note: '回答有结构', color: C.blue, at: 20.58 },
+            { label: '工作汇报', note: '结论有证据', color: C.violet, at: 21.12 },
+            { label: '演讲训练', note: '表达有分量', color: '#63d9c4', at: 21.66 },
+          ];
+          stages.forEach((stage, index) => {
+            const enter = reveal(t, stage.at, 0.2);
+            const exit = index === stages.length - 1 ? 1 : 1 - reveal(t, stage.at + 0.48, 0.16);
+            const p = enter * exit * alpha;
+            if (p <= 0) return;
+            ctx.save();
+            ctx.globalAlpha = p;
+            ctx.translate((1 - enter) * 115, 0);
+            dot(345, 515, 11, stage.color, p);
+            fillText(stage.label, 390, 590, 118, C.white, 760, p);
+            fillText(stage.note, 402, 664, 30, stage.color, 680, p);
+            const rule = ctx.createLinearGradient(390, 0, 1440, 0);
+            rule.addColorStop(0, stage.color);
+            rule.addColorStop(1, 'rgba(120,170,255,0)');
+            ctx.fillStyle = rule;
+            ctx.fillRect(390, 710, 980 * enter, 4);
+            ctx.restore();
+          });
+        }
+
+        function drawOutro(t) {
+          const alpha = reveal(t, 22.2, 0.42);
+          if (alpha <= 0) return;
+          backgroundGlow(t, 1.1);
+          brandArcs(alpha * 0.85);
+          const p = reveal(t, 22.5, 0.42);
+          dot(566, 286, 8 + pulse(t, 22.55) * 8, C.lime, alpha);
+          fillText('表达能力训练器', 592, 300, 32, C.white, 700, alpha);
+          trackedText('OPEN SOURCE · LOCAL FIRST', 592, 348, 17, C.blue, 5, alpha);
+          largeWord('让每一句话，', 476, 545, 102, C.white, p, 700);
+          largeWord('都有分量。', 476, 675, 112, C.lime, reveal(t, 22.85, 0.45), 760);
+          roundedRect(690, 785, 540, 72, 36, C.lime, null, reveal(t, 23.6, 0.42));
+          fillText('GitHub · Speech Trainer   ★', 798, 832, 27, C.bg, 800, reveal(t, 23.6, 0.42));
+          fillText('面试  ·  汇报  ·  演讲', 808, 925, 21, C.muted, 600, reveal(t, 24.0, 0.3));
+        }
+
+        function drawFrame(index) {
+          const t = index / FPS;
+          ctx.clearRect(0, 0, W, H);
+          backgroundGlow(t, 0.8);
+          if (t < 2.4) drawHook(t);
+          if (t >= 1.7 && t < 13.5) drawLive(t);
+          if (t >= 12.85 && t < 18.1) drawReport(t);
+          if (t >= 15.95 && t < 20.95) drawReportDimensions(t);
+          if (t >= 20.45 && t < 22.65) drawScope(t);
+          if (t >= 22.15) drawOutro(t);
+
+          // Subtle film grain and a render-safe border.
+          ctx.save();
+          ctx.globalAlpha = 0.025;
+          ctx.fillStyle = '#ffffff';
+          for (let i = 0; i < 140; i += 1) {
+            const x = (i * 137 + index * 31) % W;
+            const y = (i * 83 + index * 17) % H;
+            ctx.fillRect(x, y, 1, 1);
+          }
+          ctx.restore();
+          ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+          ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
+        }
+
+        async function loadImage(image) {
+          if (image.complete && image.naturalWidth > 0) return;
+          await new Promise((resolve, reject) => {
+            image.addEventListener('load', resolve, { once: true });
+            image.addEventListener('error', reject, { once: true });
+          });
+        }
+
+        Promise.all([loadImage(home), loadImage(live), loadImage(report), document.fonts.ready])
+          .then(() => {
+            ready.textContent = 'ready';
+            drawFrame(frame);
+          })
+          .catch((error) => {
+            ready.textContent = `error:${error.message}`;
+          });
+
+        step.addEventListener('click', () => {
+          frame = Math.min(frame + 1, FPS * DURATION - 1);
+          frameStatus.textContent = String(frame);
+          drawFrame(frame);
+        });
+        reset.addEventListener('click', () => {
+          frame = 0;
+          frameStatus.textContent = '0';
+          drawFrame(frame);
+        });
+
+        render.addEventListener('click', async () => {
+          render.disabled = true;
+          progressStatus.textContent = 'rendering';
+          try {
+            for (let index = 0; index < FPS * DURATION; index += 1) {
+              frame = index;
+              frameStatus.textContent = String(frame);
+              drawFrame(frame);
+              const blob = await new Promise((resolve, reject) => {
+                canvas.toBlob(
+                  (value) => value ? resolve(value) : reject(new Error('JPEG export failed')),
+                  'image/jpeg',
+                  0.93,
+                );
+              });
+              const name = `frame-${String(index).padStart(3, '0')}.jpg`;
+              const response = await fetch(`/__promo_frame__/${name}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'image/jpeg' },
+                body: blob,
+              });
+              if (!response.ok) {
+                throw new Error(`Frame ${index} upload failed: ${response.status}`);
+              }
+              if (index % FPS === 0) {
+                progressStatus.textContent = `rendering:${index}`;
+              }
+            }
+            progressStatus.textContent = 'complete';
+          } catch (error) {
+            progressStatus.textContent = `error:${error.message}`;
+          } finally {
+            frame = 0;
+            frameStatus.textContent = '0';
+            drawFrame(frame);
+            render.disabled = false;
+          }
+        });
+        window.promoMeta = { fps: FPS, duration: DURATION, totalFrames: FPS * DURATION };
+      })();
+    </script>
+  </body>
+</html>

@@ -1769,6 +1769,65 @@ body.is-live-training :where(button, a, [role='button']) {
   border-bottom: 1px solid var(--live-line);
 }
 
+.live-feedback-strip.is-coach-hidden {
+  grid-template-columns: minmax(280px, 1.5fr) repeat(2, minmax(132px, 0.75fr));
+  min-height: 86px;
+}
+
+.live-feedback-review-list {
+  max-height: min(58vh, 520px);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.live-feedback-review {
+  display: grid;
+  max-height: min(62vh, 560px);
+  gap: 20px;
+  overflow-y: auto;
+}
+
+.live-feedback-review section > h3 {
+  margin: 0 0 4px;
+  color: #172033;
+  font-size: 13px;
+}
+
+.live-feedback-review .live-feedback-review-list {
+  max-height: none;
+  overflow: visible;
+}
+
+.live-feedback-review-list li {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 5px 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid rgba(156, 188, 228, 0.22);
+}
+
+.live-feedback-review-list li > span {
+  grid-row: span 2;
+  color: #637083;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.live-feedback-review-list strong {
+  overflow-wrap: anywhere;
+  color: #172033;
+  font-size: 14px;
+}
+
+.live-feedback-review-list p,
+.live-feedback-review-empty {
+  margin: 0;
+  color: #637083;
+  line-height: 1.6;
+}
+
 .live-action-block,
 .live-metric-block {
   min-width: 0;
@@ -1937,6 +1996,7 @@ body.is-live-training :where(button, a, [role='button']) {
   .live-feedback-strip,
   .training-main-grid { width: min(100% - 40px, 760px); }
   .live-feedback-strip { grid-template-columns: minmax(0, 1.45fr) minmax(0, 1.1fr) minmax(110px, 0.72fr); }
+  .live-feedback-strip.is-coach-hidden { grid-template-columns: minmax(0, 1.3fr) repeat(2, minmax(110px, 0.7fr)); }
   .live-action-block { grid-row: span 2; }
   .live-metric-block:nth-child(3) { border-right: 0; }
   .live-metric-block:nth-child(4) { grid-column: 2; border-top: 1px solid rgba(156, 188, 228, 0.16); }
@@ -1950,6 +2010,9 @@ body.is-live-training :where(button, a, [role='button']) {
   .live-rail-items i { width: 8px; height: 8px; }
   .live-ai-overlay { top: 126px; width: calc(100% - 24px); padding: 13px 14px; }
   .live-feedback-strip { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); width: min(100% - 32px, 560px); }
+  .live-feedback-strip.is-coach-hidden { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .live-feedback-strip.is-coach-hidden .live-metric-block:first-child { grid-column: 1 / -1; }
+  .live-feedback-strip.is-coach-hidden .live-metric-block:last-child { border-right: 0; }
   .live-action-block { grid-column: 1 / -1; grid-row: auto; border-right: 0; border-bottom: 1px solid rgba(156, 188, 228, 0.16); }
   .live-metric-block:nth-child(3) { border-right: 1px solid rgba(156, 188, 228, 0.16); }
   .live-metric-block:nth-child(4) { grid-column: auto; border-top: 0; }
@@ -1967,6 +2030,8 @@ body.is-live-training :where(button, a, [role='button']) {
   .live-action-block > p { font-size: 11px; }
   .live-overtime-alert { align-items: flex-start; gap: 11px; padding: 12px; }
   .live-overtime-alert .ant-btn { min-height: 36px; padding-inline: 9px; }
+  .live-feedback-review-list li { grid-template-columns: 1fr; }
+  .live-feedback-review-list li > span { grid-row: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

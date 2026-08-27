@@ -462,7 +462,9 @@ def _detect_semantic_repetition_single(
     + 新证据/结果”误报成重复。
     """
     current = _semantic_normalize(current_sentence)
-    if len(current) < 8:
+    # 六七字的完整短句也可能是在浓缩复述上一句，例如“在大城市漂泊”。
+    # 继续保留最小长度，避免把“好的”“没问题”等普通应答误判为重复。
+    if len(current) < 6:
         return None
     current_numbers = set(re.findall(r"\d+(?:\.\d+)?%?", current))
     current_grams = _semantic_ngrams(current)
@@ -472,7 +474,7 @@ def _detect_semantic_repetition_single(
     best: tuple[float, str, float, float] | None = None
     for previous_sentence in list(previous_sentences)[-max_history:]:
         previous = _semantic_normalize(previous_sentence)
-        if len(previous) < 8:
+        if len(previous) < 6:
             continue
         if any(
             (left in previous and right in current)
@@ -507,7 +509,16 @@ def _detect_semantic_repetition_single(
             and len(shared_content) >= 3
             and added_ratio <= 0.38
         )
-        if not reordered_numeric_claim and (
+        # 对 6～7 字短句使用“当前句绝大部分已在前句出现”的严格条件。
+        # 这只放宽简短复述，不放宽带有新动作、结果或数字的补充句。
+        concise_restatement = (
+            len(current) < 8
+            and matched_chars >= 5
+            and matched_chars / len(current) >= 0.82
+            and len(shared_content) >= 4
+            and added_ratio <= 0.18
+        )
+        if not reordered_numeric_claim and not concise_restatement and (
             similarity < 0.72 or gram_overlap < 0.56 or added_ratio > 0.30
         ):
             continue

@@ -253,7 +253,8 @@ body.is-home-showcase .app-content {
   z-index: 1;
   transform: translateY(-4px);
   border-color: rgba(216, 255, 63, 0.72);
-  outline: none;
+  outline: 2px solid #d8ff3f;
+  outline-offset: 3px;
   background: rgba(141, 186, 255, 0.1);
 }
 

@@ -189,6 +189,12 @@ body.is-operate-surface .app-content {
   background: #e3ff72;
 }
 
+.operate-page .ant-btn:disabled {
+  color: #7f8da3;
+  border-color: rgba(156, 188, 228, 0.28);
+  background: rgba(255, 255, 255, 0.045);
+}
+
 .operate-state {
   display: grid;
   place-items: center;

@@ -107,6 +107,10 @@ async def test_scenario_report_uses_own_evaluation_profile(
     assert report["sample_state"] == "voice_calibrated"
     assert report["score_coverage"] == 1.0
     assert report["overall_score"] is not None
+    signal_axes = [axis for axis in report["axes"] if axis["source"] == "signal"]
+    assert all(axis["feedback"] for axis in signal_axes)
+    assert all(axis["evidence"] for axis in signal_axes)
+    assert any("真实发言" in item for axis in signal_axes for item in axis["evidence"])
 
 
 async def test_report_does_not_turn_partial_axes_into_overall_score(

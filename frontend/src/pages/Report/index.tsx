@@ -127,7 +127,7 @@ export default function Report() {
                 if (id) window.open(`/api/v1/reports/${id}/pdf`, '_blank')
               }}
             >
-              导出 PDF
+              {isDemo ? '示例不可导出' : '导出 PDF'}
             </Button>
             <Button icon={<ArrowLeftOutlined />} onClick={() => nav('/')}>返回首页</Button>
           </div>
