@@ -17,12 +17,14 @@
 - README、更新记录、Release Notes、Issue 模板、安全政策、贡献指南、许可证和 GitHub 上线执行单已就绪。
 - 最新 Windows 离线私测包 `SpeechTrainer-Windows-Test-20260826-r3.zip` 已完成 ZIP 完整性、内置运行时、63 个离线 wheel、2 个离线模型和隐私清单复核；SHA-256 为 `22062b39edc46891f2bba840ca0d2f3f331e04df76d737f24e0d7f6dcf4d71f0`。该包含临时 DeepSeek Key，只能私下测试，禁止上传 GitHub。
 - 2026-08-27，维护者确认最新 Windows 离线私测包已在 64 位 Windows 实机完成安装、启动、本地语音模型加载、一次训练和报告生成，Windows 首次使用链路验收通过。
+- 2026-08-27，候选提交已推送到私有仓库 `Cx1824/speech-trainer` 的 `codex/release-rehearsal-v0.1.0` 分支，并从远程重新 clone。全新 Python/Node 依赖安装、本地模型检查、270 项后端测试、前端 lint/构建/专项测试、发布扫描、后端健康检查和前端启动均通过。
 
 ## 不能由自动化替代的发布门槛
 
 - 维护者确认自有代码、示例、评测元数据、字体、宣传片画面和声音具备公开发布权利。
 - 在真实麦克风下分别完成面试、工作汇报和演讲训练，并生成报告；每个场景至少包含一次正常表达和一次刻意问题表达。
-- 确定 GitHub 所有者与仓库名，在私有仓库完成 clone / install / start / CI / Release 演练。
+- 在已登录的 GitHub 页面复核 Actions 结果、默认分支和安全设置；仓库公开时启用私密漏洞报告。
+- 正式公开前创建并校验 `v0.1.0` tag 与 Release；当前只推送独立演练分支，未改动远程 `main`。
 - 由维护者决定公开时间，创建 `v0.1.0` tag 和 Release，并启用私密漏洞报告。
 
 以上项目需要真实设备、发布权利确认或 GitHub 仓库权限；在完成前不应把
