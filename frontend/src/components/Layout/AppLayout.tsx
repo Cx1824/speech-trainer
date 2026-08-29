@@ -20,7 +20,7 @@ export default function AppLayout() {
       <Header className="app-shell-header">
         <button type="button" className="app-shell-brand" onClick={() => nav('/')}>
           <span className="app-shell-brand-mark" aria-hidden="true" />
-          <span className="app-shell-brand-copy">表达能力训练器</span>
+          <span className="app-shell-brand-copy">表达力训练器</span>
         </button>
         <Menu
           className="app-shell-menu"

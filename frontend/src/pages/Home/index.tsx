@@ -55,7 +55,7 @@ export default function Home() {
   return (
     <main className="home-showcase">
       <header className="home-showcase-header">
-        <button type="button" className="home-brand" onClick={() => nav('/')}>表达能力训练器</button>
+        <button type="button" className="home-brand" onClick={() => nav('/')}>表达力训练器</button>
         <div className="home-header-actions">
           <button type="button" onClick={() => nav('/report/demo')}><FileTextOutlined /> 示例报告</button>
           <button type="button" onClick={() => nav('/settings')}>设置</button>

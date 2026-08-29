@@ -1,7 +1,7 @@
 <div align="center">
   <img src="frontend/public/speech-trainer.svg" width="88" alt="Speech Trainer logo" />
 
-  # 表达能力训练器 · Speech Trainer
+  # 表达力训练器 · Speech Trainer
 
   **别等说完，才发现自己一直在重复。**
 

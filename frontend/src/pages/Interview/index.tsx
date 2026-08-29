@@ -1104,7 +1104,7 @@ export default function Interview() {
         <div className="training-toolbar">
           <Space wrap>
             <span className={`live-status-dot ${vs.connected ? 'is-ready' : ''}`} />
-            <span className="live-brand">表达能力训练器</span>
+            <span className="live-brand">表达力训练器</span>
             <span className="live-session-meta">
               {isRecordingReplay ? '通话面试复盘 / 仅分析本人声音' : `${scenarioMeta.name} / ${isInterview ? `AI ${scenarioMeta.role}` : '实时教练'}`}
             </span>
