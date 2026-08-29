@@ -131,12 +131,25 @@ async def upload_resume(
 
     # 调用 LLM 解析
     cfg = await load_provider_config(db, "llm")
-    provider = get_llm(cfg)
+    if (cfg.api_key or "").strip():
+        provider = get_llm(cfg)
 
-    async def _llm(messages):
-        return await provider.chat(messages, temperature=0.1)
+        async def _llm(messages):
+            return await provider.chat(messages, temperature=0.1)
 
-    parsed = await parse_with_llm(text, _llm)
+        parsed = await parse_with_llm(text, _llm)
+    else:
+        # 本地模式只完成文件与文本提取；岗位和职级由使用者手动填写。
+        # 不把未经过语义解析的内容伪装成结构化简历。
+        parsed = {
+            "basics": {},
+            "education": [],
+            "work": [],
+            "projects": [],
+            "skills": [],
+            "position_guess": "",
+            "level_guess": "",
+        }
 
     # 保存文件 + 解析结果
     file_path = Path(settings.upload_dir) / f"{sid}_resume{ext}"

@@ -61,16 +61,44 @@ def _report(ctx: ScenarioContext) -> list[dict]:
     return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "已结束。"}]
 
 
+def _fallback_opening(ctx: ScenarioContext) -> str:
+    minutes = ctx.duration_limit or 5
+    return f"准备好后，请开始本次工作汇报。建议先说结论，并留意 {minutes} 分钟的训练时长。"
+
+
+def _fallback_qa(ctx: ScenarioContext) -> str:
+    questions = (
+        "你刚才的核心结论，有哪些可以核对的数据或事实支持？",
+        "下一步准备怎样推进？请说明负责人、时间节点和衡量标准。",
+        "这项工作的主要风险是什么，你准备采取什么应对动作？",
+    )
+    previous_ai_turns = sum(1 for item in ctx.history if item.get("role") == "ai")
+    return questions[max(0, previous_ai_turns - 1) % len(questions)]
+
+
+def _fallback_ending(ctx: ScenarioContext) -> str:
+    return "本次工作汇报训练已结束。你的完整记录和本地表达分析已保存。"
+
+
 pack = ScenarioPack(
     key="presentation",
     name="工作汇报",
     role_name="评审",
     description="模拟向上汇报/述职：支持上传汇报材料，练结论先行与数据支撑，AI 评审最后质询追问。",
     stages=(
-        ScenarioStage(key="opening", name="开场", question_limit=1, prompt_builder=_opening),
+        ScenarioStage(
+            key="opening", name="开场", question_limit=1,
+            prompt_builder=_opening, fallback_builder=_fallback_opening,
+        ),
         ScenarioStage(key="presenting", name="汇报进行", question_limit=0, prompt_builder=_presenting),
-        ScenarioStage(key="qa", name="评审质询", question_limit=3, prompt_builder=_qa),
-        ScenarioStage(key="ending", name="收尾", question_limit=1, prompt_builder=_ending),
+        ScenarioStage(
+            key="qa", name="评审质询", question_limit=3,
+            prompt_builder=_qa, fallback_builder=_fallback_qa,
+        ),
+        ScenarioStage(
+            key="ending", name="收尾", question_limit=1,
+            prompt_builder=_ending, fallback_builder=_fallback_ending,
+        ),
         ScenarioStage(key="report", name="已结束", question_limit=0, prompt_builder=_report),
     ),
     evaluation=EvaluationProfile(

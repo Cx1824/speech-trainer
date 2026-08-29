@@ -113,6 +113,16 @@ def _decode_report(row: InterviewReportRow) -> dict[str, Any]:
         raise ValueError(f"报告快照格式无效：{row.id}")
     # v4 之前的快照没有关键任务约束字段；读时补空数组，避免旧报告报错。
     report.setdefault("score_constraints", [])
+    if "semantic_status" not in report:
+        semantic_axes = [
+            axis for axis in report.get("axes", [])
+            if isinstance(axis, dict) and axis.get("source") == "llm"
+        ]
+        report["semantic_status"] = (
+            "complete"
+            if semantic_axes and all(axis.get("score") is not None for axis in semantic_axes)
+            else "failed"
+        )
     return report
 
 
@@ -190,7 +200,10 @@ async def _build_report(db: AsyncSession, sid: str) -> dict[str, Any]:
     llm_summary = (
         await _llm_evaluate(db, session, dialogues, pack, signal_evidence)
         if total_chars > 0
-        else {"summary": "有效发言不足，暂不能生成完整评价。"}
+        else {
+            "semantic_status": "insufficient",
+            "summary": "有效发言不足，暂不能生成完整评价。",
+        }
     )
 
     # ---- 共享信号定分 + 场景评价 ----
@@ -227,6 +240,19 @@ async def _build_report(db: AsyncSession, sid: str) -> dict[str, Any]:
             signal_scores.get(axis.signal_key)
             if axis.source == "signal"
             else _axis_from_llm(llm_summary, axis.key, axis.min_evidence)
+        )
+
+    semantic_status = str(llm_summary.get("semantic_status") or "")
+    if semantic_status not in {"complete", "unconfigured", "failed", "insufficient"}:
+        semantic_scores = [
+            axis_scores[axis.key]
+            for axis in pack.evaluation.axes
+            if axis.source == "llm"
+        ]
+        semantic_status = (
+            "complete"
+            if semantic_scores and all(score is not None for score in semantic_scores)
+            else "failed"
         )
 
     weights = {axis.key: axis.weight for axis in pack.evaluation.axes}
@@ -322,6 +348,7 @@ async def _build_report(db: AsyncSession, sid: str) -> dict[str, Any]:
             speech_duration=speech_duration,
             calibrated=getattr(emotion_overall, "calibrated", False),
         ),
+        "semantic_status": semantic_status,
         "summary": llm_summary.get("summary", ""),
         "axes": axes,
         "expression_metrics": {
@@ -793,6 +820,14 @@ professional_advice 必须覆盖以下 {pack.name} 专业维度，每个维度�
     try:
         from app.modules.config import load_provider_config
         cfg = await load_provider_config(db, "llm")
+        if not (cfg.api_key or "").strip():
+            return {
+                "semantic_status": "unconfigured",
+                "summary": (
+                    "本次本地分析已完成。内容结构与场景评价尚未生成；"
+                    "你可以复制分析材料，交给任意语言模型继续分析。"
+                ),
+            }
         provider = get_llm(cfg)
         report_options: dict[str, Any] = {
             "temperature": 0.3,
@@ -812,17 +847,27 @@ professional_advice 必须覆盖以下 {pack.name} 专业维度，每个维度�
             **report_options,
         )
         result = _safe_json(raw)
-        return _validate_semantic_evidence(
+        validated = _validate_semantic_evidence(
             result,
             [axis.key for axis in semantic_axes],
             [dialogue.text for dialogue in dialogues if dialogue.role == "user"],
         )
+        validated["semantic_status"] = (
+            "complete"
+            if all(
+                _axis_from_llm(validated, axis.key, axis.min_evidence) is not None
+                for axis in semantic_axes
+            )
+            else "failed"
+        )
+        return validated
     except Exception as e:
         logger.exception("LLM 报告评估失败")
         return {
+            "semantic_status": "failed",
             "summary": (
-                "语义评价暂未完成，请稍后重试生成报告；"
-                "下方客观表达数据仍可参考。"
+                "在线内容分析暂未完成，本地表达数据和训练记录已保留；"
+                "你可以稍后重试，或复制分析材料交给其他语言模型。"
             )
         }
 

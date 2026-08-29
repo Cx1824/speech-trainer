@@ -265,6 +265,7 @@ async def generate_next(
     resume = json.loads(row.resume_parsed_json) if row.resume_parsed_json else None
 
     pack = _pack(row)
+    fallback_text: str | None = None
     if pack.key == "interview":
         plan = planner.load_plan(row.interview_plan_json)
         if plan:
@@ -293,6 +294,7 @@ async def generate_next(
                 question_candidate=question_candidate,
             )
             stage_key = item["stage"]
+            fallback_text = _fallback_interview_question(item, is_followup)
         else:
             stage = Stage(row.current_stage)
             messages = build_messages(
@@ -306,6 +308,11 @@ async def generate_next(
                 jd_content=row.jd_content,
             )
             stage_key = stage.value
+            stage_def = _get_stage_def(pack, stage_key)
+            fallback_text = _fallback_interview_question(
+                {"label": stage_def.name},
+                False,
+            )
     else:
         from app.modules.scenarios.base import ScenarioContext
         stage_def = _get_stage_def(pack, row.current_stage)
@@ -321,31 +328,44 @@ async def generate_next(
         )
         messages = stage_def.prompt_builder(ctx)
         stage_key = stage_def.key
+        if stage_def.fallback_builder is not None:
+            fallback_text = stage_def.fallback_builder(ctx)
 
     if llm_api is None:
         from app.modules.config import load_provider_config
         cfg = await load_provider_config(db, "llm")
-        provider = get_llm(cfg)
-        options: dict[str, Any] = {
-            "temperature": 0.7,
-            "max_tokens": QUESTION_MAX_TOKENS,
-            "read_timeout": QUESTION_READ_TIMEOUT_SECONDS,
-        }
-        if cfg.provider == "deepseek":
-            options["thinking"] = False
-        started = time.monotonic()
-        try:
-            text = await provider.chat(messages, **options)
-            logger.info("训练问题生成完成：%.2f 秒", time.monotonic() - started)
-        except ProviderError as exc:
-            if pack.key != "interview" or not plan or item is None:
-                raise
-            logger.warning(
-                "训练问题生成失败，使用本地兜底问题：error_type=%s elapsed=%.2f",
-                type(exc).__name__,
-                time.monotonic() - started,
+        if not (cfg.api_key or "").strip() and fallback_text is not None:
+            text = fallback_text
+            logger.info(
+                "内容分析模型未配置，使用本地兜底话术：scenario=%s stage=%s",
+                pack.key,
+                stage_key,
             )
-            text = _fallback_interview_question(item, is_followup)
+        else:
+            provider = get_llm(cfg)
+            options: dict[str, Any] = {
+                "temperature": 0.7,
+                "max_tokens": QUESTION_MAX_TOKENS,
+                "read_timeout": QUESTION_READ_TIMEOUT_SECONDS,
+            }
+            if cfg.provider == "deepseek":
+                options["thinking"] = False
+            started = time.monotonic()
+            try:
+                text = await provider.chat(messages, **options)
+                logger.info("训练问题生成完成：%.2f 秒", time.monotonic() - started)
+            except ProviderError as exc:
+                if fallback_text is None:
+                    raise
+                logger.warning(
+                    "训练问题生成失败，使用本地兜底话术：scenario=%s stage=%s "
+                    "error_type=%s elapsed=%.2f",
+                    pack.key,
+                    stage_key,
+                    type(exc).__name__,
+                    time.monotonic() - started,
+                )
+                text = fallback_text
     else:
         text = await llm_api(messages)
 

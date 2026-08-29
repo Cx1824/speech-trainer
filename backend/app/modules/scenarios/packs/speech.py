@@ -50,15 +50,31 @@ def _report(ctx: ScenarioContext) -> list[dict]:
     return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "已结束。"}]
 
 
+def _fallback_opening(ctx: ScenarioContext) -> str:
+    topic = ctx.position or "自由演讲"
+    minutes = ctx.duration_limit or 5
+    return f"接下来是“{topic}”演讲训练，时长约 {minutes} 分钟。准备好后，请开始。"
+
+
+def _fallback_ending(ctx: ScenarioContext) -> str:
+    return "本次演讲训练已结束。你的完整记录和本地表达分析已保存。"
+
+
 pack = ScenarioPack(
     key="speech",
     name="演讲训练",
     role_name="主持人",
     description="限时演讲实战：自选时长倒计时，AI 主持人开场收尾不打断，练主题主张、结构推进与修辞表达。",
     stages=(
-        ScenarioStage(key="opening", name="开场", question_limit=1, prompt_builder=_opening),
+        ScenarioStage(
+            key="opening", name="开场", question_limit=1,
+            prompt_builder=_opening, fallback_builder=_fallback_opening,
+        ),
         ScenarioStage(key="presenting", name="演讲进行", question_limit=0, prompt_builder=_presenting),
-        ScenarioStage(key="ending", name="收尾", question_limit=1, prompt_builder=_ending),
+        ScenarioStage(
+            key="ending", name="收尾", question_limit=1,
+            prompt_builder=_ending, fallback_builder=_fallback_ending,
+        ),
         ScenarioStage(key="report", name="已结束", question_limit=0, prompt_builder=_report),
     ),
     evaluation=EvaluationProfile(

@@ -79,7 +79,7 @@ export default function QuestionBank() {
         </Form>
 
         {questions.length === 0 ? (
-          <Empty description={`「${position}」岗位暂未录入题库，将由 LLM 自由生成`} />
+          <Empty description={`「${position}」岗位暂未录入题库，训练时将使用通用问题或已配置模型生成`} />
         ) : (
           questions.map((q, i) => (
             <Card key={i} size="small" style={{ marginBottom: 8 }} title={

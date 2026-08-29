@@ -192,7 +192,7 @@ async def test_live_question_call_uses_latency_bounds_for_deepseek(
 
     async def fake_load_config(db, kind):
         assert kind == "llm"
-        return ProviderConfigIn(provider="deepseek")
+        return ProviderConfigIn(provider="deepseek", api_key="test-key")
 
     monkeypatch.setattr(config_module, "load_provider_config", fake_load_config)
     monkeypatch.setattr(manager, "get_llm", lambda _config: RecordingProvider())

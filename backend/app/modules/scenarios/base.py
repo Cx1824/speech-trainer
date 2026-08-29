@@ -69,6 +69,7 @@ class ScenarioStage:
     name: str                                 # 中文名（前端展示）
     question_limit: int                       # 本阶段 AI 发言次数上限（0=不生成）
     prompt_builder: Callable[["ScenarioContext"], list[dict]]
+    fallback_builder: Callable[["ScenarioContext"], str] | None = None
 
 
 @dataclass(frozen=True)

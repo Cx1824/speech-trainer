@@ -141,6 +141,13 @@ export const apiService = {
   generateReport: generateReportOnce,
   regenerateReport: (sid: string) =>
     request<ReportData>(`/reports/${sid}/regenerate`, { method: 'POST' }),
+  getManualAnalysis: (sid: string) =>
+    request<{
+      filename: string
+      transcript_markdown: string
+      prompt: string
+      markdown: string
+    }>(`/reports/${sid}/manual-analysis`),
 
   // 面试档案
   listProfiles: () => request<InterviewProfile[]>('/profiles'),

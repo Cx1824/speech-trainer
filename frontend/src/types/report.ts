@@ -19,6 +19,8 @@ export interface ReportData {
   score_coverage: number
   interview_coverage?: InterviewCoverage | null
   sample_state: 'insufficient' | 'text_only' | 'voice_uncalibrated' | 'voice_calibrated'
+  /** 内容语义评价状态；旧报告可能没有该字段。 */
+  semantic_status?: 'complete' | 'unconfigured' | 'failed' | 'insufficient'
   summary: string
   axes: {
     key: string

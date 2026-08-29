@@ -10,7 +10,11 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
-from app.modules.report import generate_report, get_report
+from app.modules.report import (
+    build_manual_analysis_package,
+    generate_report,
+    get_report,
+)
 from app.modules.scenarios import get_pack
 
 logger = logging.getLogger(__name__)
@@ -107,6 +111,16 @@ async def regenerate_report(
 ) -> dict:
     """显式创建一个新的报告版本。"""
     return await generate_report(db, sid, regenerate=True)
+
+
+@router.get("/{sid}/manual-analysis")
+async def manual_analysis_package(
+    sid: str,
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    """导出对话记录和可提交给任意语言模型的分析提示词。"""
+    report = await get_report(db, sid)
+    return build_manual_analysis_package(report)
 
 
 @router.get("/{sid}/pdf")

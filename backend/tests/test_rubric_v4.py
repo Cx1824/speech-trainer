@@ -287,7 +287,7 @@ async def test_llm_prompt_separates_timing_and_signal_facts_from_semantic_eviden
             return '{"summary": "测试"}'
 
     async def fake_load_provider_config(db, provider_type):
-        return SimpleNamespace(provider="deepseek")
+        return SimpleNamespace(provider="deepseek", api_key="test-key")
 
     monkeypatch.setattr(
         config_module,

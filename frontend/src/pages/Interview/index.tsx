@@ -211,7 +211,7 @@ export default function Interview() {
         })
         message.success(`简历解析完成（推荐岗位：${updated.resume_parsed.position_guess}）`)
       } else {
-        message.success('简历解析完成')
+        message.success('简历已保存在本机；未生成岗位建议时，请手动填写岗位和职级')
       }
       // 记录简历会话 sid
       setResumeSid(session.id)
@@ -369,7 +369,7 @@ export default function Interview() {
       await apiService.uploadMaterial(sessionId, file)
       setMaterialFile(file)
       setMaterialUploaded(true)
-      message.success('材料上传成功，AI 将基于材料提问/点评')
+      message.success('材料上传成功，已关联到本次训练')
     } catch (e: any) {
       message.error(`材料上传失败：${e.message}`)
     } finally {
