@@ -7,7 +7,7 @@
 
   本地优先的中文表达训练器：在你说话时标出口头禅、连续重复、重复意思与节奏问题，训练后生成有原话证据的场景化报告。
 
-  [快速开始](#快速开始) · [核心能力](#它会在什么时候提醒你) · [训练场景](#为三种真实场景而设计) · [工作原理](#工作原理) · [参与贡献](#参与贡献)
+  [▶ 观看 26 秒产品演示](https://github.com/Cx1824/speech-trainer/releases/download/v0.1.0/speech-trainer-commercial-26s.mp4) · [快速开始](#快速开始) · [核心能力](#它会在什么时候提醒你) · [训练场景](#为三种真实场景而设计) · [工作原理](#工作原理) · [参与贡献](#参与贡献)
 
   [![CI](https://github.com/Cx1824/speech-trainer/actions/workflows/ci.yml/badge.svg)](https://github.com/Cx1824/speech-trainer/actions/workflows/ci.yml)
   [![License: MIT](https://img.shields.io/badge/License-MIT-C8FF3D.svg)](LICENSE)
